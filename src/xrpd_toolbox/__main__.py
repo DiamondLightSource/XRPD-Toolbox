@@ -1,4 +1,4 @@
-"""Interface for ``python -m XRPD_Toolbox``."""
+"""Interface for ``python -m xrpd_toolbox``."""
 
 from argparse import ArgumentParser
 from collections.abc import Sequence
