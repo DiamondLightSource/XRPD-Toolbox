@@ -1,0 +1,21 @@
+# Changes here will be overwritten by Copier
+_commit: 5.0.2
+_src_path: https://github.com/DiamondLightSource/python-copier-template.git
+author_email: richard.dixey@diamond.ac.uk
+author_name: Richard Dixey
+component_lifecycle: experimental
+component_owner: group:default/data-analysis
+component_type: library
+description: A repository for useful python data analysis tools for the X-ray powder
+    diffraction beamlines at Diamond Light Source
+distribution_name: XRPD-Toolbox
+docker: true
+docker_debug: false
+docs_type: README
+git_platform: github.com
+github_org: DiamondLightSource
+package_name: XRPD_Toolbox
+pypi: true
+repo_name: XRPD-Toolbox
+strict_typing: false
+type_checker: pyright
