@@ -19,6 +19,8 @@ dependencies = [
     "scipy",
     "pyfai",
     "pandas",
+    "lmfit",
+    "peakutils",
 ] # Add project dependencies here, e.g. ["click", "numpy"]
 dynamic = ["version"]
 license.file = "LICENSE"
