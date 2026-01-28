@@ -65,9 +65,9 @@ class ProcessingWorker(QThread):
 class MainWindow(QWidget):
     def __init__(
         self,
-        settings_columns: int = 1,
         settings_path: str | Path | None = None,
         settings: MythenReductionSettings | None = None,
+        settings_columns: int = 1,
     ) -> None:
         super().__init__()
 
@@ -118,7 +118,7 @@ class MainWindow(QWidget):
 
         self.tree = QTreeView()
         self.tree.setModel(self.fs_model)
-        self.tree.setRootIndex(self.fs_model.index(QDir.homePath()))
+        self.tree.setRootIndex(self.fs_model.index(QDir.currentPath()))
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
 
         for col in range(1, self.fs_model.columnCount()):
@@ -196,22 +196,22 @@ class MainWindow(QWidget):
 
     def make_threshold(self) -> QDoubleSpinBox:
         w = QDoubleSpinBox()
-        w.setRange(0.0, 1e9)
-        w.setValue(self.settings_model.threshold)
-        self.widgets["threshold"] = w
+        # w.setRange(0.0, 1e9)
+        # w.setValue(self.settings_model.threshold)
+        # self.widgets["threshold"] = w
         return w
 
     def make_max_iterations(self) -> QSpinBox:
         w = QSpinBox()
-        w.setRange(1, 1_000_000)
-        w.setValue(self.settings_model.max_iterations)
-        self.widgets["max_iterations"] = w
+        # w.setRange(1, 1_000_000)
+        # w.setValue(self.settings_model.max_iterations)
+        # self.widgets["max_iterations"] = w
         return w
 
     def make_normalize(self) -> QCheckBox:
         w = QCheckBox()
-        w.setChecked(self.settings_model.normalize)
-        self.widgets["normalize"] = w
+        # w.setChecked(self.settings_model.normalize)
+        # self.widgets["normalize"] = w
         return w
 
     def make_output_dir(self) -> QWidget:
@@ -276,10 +276,10 @@ class MainWindow(QWidget):
 
     def collect_settings(self) -> MythenReductionSettings:
         return MythenReductionSettings(
-            threshold=cast(QDoubleSpinBox, self.widgets["threshold"]).value(),
-            max_iterations=cast(QSpinBox, self.widgets["max_iterations"]).value(),
-            normalize=cast(QCheckBox, self.widgets["normalize"]).isChecked(),
-            output_dir=cast(QLineEdit, self.widgets["output_dir"]).text(),
+            # threshold=cast(QDoubleSpinBox, self.widgets["threshold"]).value(),
+            # max_iterations=cast(QSpinBox, self.widgets["max_iterations"]).value(),
+            # normalize=cast(QCheckBox, self.widgets["normalize"]).isChecked(),
+            # output_dir=cast(QLineEdit, self.widgets["output_dir"]).text(),
         )
 
     # ---------------------
@@ -320,17 +320,21 @@ class MainWindow(QWidget):
     def on_file_started(self, path: Path) -> None:
         item = self.find_item(path)
         if item:
-            item.setText(f"🔄 {path.name}")
+            item.setText(f"O {path.name}")
+            # item.setText(f"🔄 {path.name}")
 
     def on_file_finished(self, path: Path) -> None:
         item = self.find_item(path)
         if item:
-            item.setText(f"✅ {path.name}")
+            item.setText(f"Y {path.name}")
+            # item.setText(f"✅ {path.name}")
 
     def on_file_failed(self, path: Path, error: str) -> None:
         item = self.find_item(path)
         if item:
-            item.setText(f"❌ {path.name}")
+            item.setText(f"X {path.name}")
+            # item.setText(f"❌ {path.name}")
+
         print(f"Error processing {path}: {error}")
 
     def on_all_done(self) -> None:
@@ -344,8 +348,9 @@ class MainWindow(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = MainWindow(
-        settings_columns=2, settings_path="/Users/akz63626/Documents/settings.json"
-    )
+
+    settings = MythenReductionSettings()
+
+    window = MainWindow(settings=settings, settings_columns=2)
     window.show()
     sys.exit(app.exec_())

@@ -10,20 +10,20 @@ from pydantic import BaseModel
 
 
 class MythenReductionSettings(BaseModel):
-    active_modules: list[int]
-    bad_modules: list[int]
-    bad_channel_masking: bool
-    flatfield_filepath: str | Path
-    apply_flatfield: bool
-    modules_in_flatfield: list[int]
-    send_to_ispyb: bool
-    rebin_step: float
-    default_counter: int
-    edge_bad_channels: int
-    error_calc: Literal["internal", "external", "best"]
-    data_reduction_mode: int
-    bad_channels_filepath: str | Path
-    angcal_filepath: str | Path
+    active_modules: list[int] = list(range(28))
+    bad_modules: list[int] = []
+    bad_channel_masking: bool = True
+    flatfield_filepath: str | Path = ""
+    apply_flatfield: bool = True
+    modules_in_flatfield: list[int] = list(range(28))
+    send_to_ispyb: bool = False
+    rebin_step: float = 0.004
+    default_counter: int = 0
+    edge_bad_channels: int = 15
+    error_calc: Literal["internal", "external", "best"] = "internal"
+    data_reduction_mode: int = 0
+    bad_channels_filepath: str | Path = ""
+    angcal_filepath: str | Path = ""
 
     @classmethod
     def load_from_toml(cls, file_path: str | Path):
