@@ -17,7 +17,7 @@ def test_mythen_settings():
         default_counter=0,
         edge_bad_channels=10,
         error_calc="internal",
-        data_reduction_mode=1,
+        data_reduction_mode="step_scan",
         bad_channels_filepath="bad_channels.txt",
         angcal_filepath="angcal.txt",
     )

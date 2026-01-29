@@ -6,10 +6,23 @@ import scipy.integrate as integrate
 from xrpd_toolbox.utils.energy import beam_energy_to_wavelength, tth_to_q
 from xrpd_toolbox.utils.utils import (
     gaussian,
+    get_filenumber_from_nxs,
     load_int_array_from_file,
+    nexus_file_match,
     normalise,
     normalise_to,
 )
+
+
+def test_get_filenumber_from_nxs():
+    filedir = "/dls/i11/test/cm12345-1/i11-99999.nxs"
+    assert get_filenumber_from_nxs(filedir) == 99999
+
+
+def test_nexus_file_match():
+    filedir = "/dls/i15-1/test/cm12345-1/i15-1-99999.nxs"
+    filename = os.path.basename(filedir)
+    assert nexus_file_match(filename, beamline="i15-1") is not None
 
 
 def test_normalise_to():

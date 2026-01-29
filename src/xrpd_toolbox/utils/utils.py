@@ -62,8 +62,8 @@ def get_nexus_files(
     return nexus_files
 
 
-def get_filenumber_from_nxs(nexus_file: str | Path) -> int:
-    basename = os.path.basename(str(nexus_file))
+def get_filenumber_from_nxs(nexus_filepath: str | Path) -> int:
+    basename = os.path.basename(str(nexus_filepath))
     filenumber_str = re.findall(r"\d+", basename)[-1]
     return int(filenumber_str)
 
