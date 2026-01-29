@@ -1,4 +1,5 @@
 import tomllib
+from collections import OrderedDict
 from collections.abc import Collection
 from pathlib import Path
 from typing import Literal
@@ -145,18 +146,30 @@ class MythenModule:
 
 
 class MythenDetector:
-    def __init__(self, modules_per_detector: int = 28):
-        self.modules_per_detector = modules_per_detector
+    def __init__(
+        self, filepath: str | Path, settings: MythenReductionSettings | None = None
+    ):
+        self.filepath = filepath
+        self.mythen_data = MythenDataLoader(filepath)
+        self.settings = settings or MythenReductionSettings()
+
+        self.modules = OrderedDict()
+
+        for module in self.settings.active_modules:
+            self.modules[module] = MythenModule(
+                self.mythen_data.get_module_data(module)
+            )
 
 
 if __name__ == "__main__":
     filepath = "/workspaces/XRPD-Toolbox/src/xrpd_toolbox/i11/mythen_calibration/mythen3_reduction_config.toml"  # noqa
 
     settings = MythenReductionSettings.load_from_toml(filepath)
-
     print("Loaded settings:", settings)
 
-    MythenDataLoader("/dls/i11/data/2026/cm44155-1/1406733.nxs")
+    MythenDetector(
+        filepath="/dls/i11/data/2026/cm44155-1/1406733.nxs", settings=settings
+    )
 
     # module = MythenModule(data)
     # result = module.process()
