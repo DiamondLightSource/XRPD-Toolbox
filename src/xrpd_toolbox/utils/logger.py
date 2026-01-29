@@ -1,21 +1,20 @@
-import os
 from datetime import datetime
 from pathlib import Path
 
 
 class AnalysisLogger:
-    def __init__(self, log_filepath: str | Path, logging=False):
-        self.log_filepath = log_filepath
-        self.logging = logging
+    def __init__(
+        self, log_filepath: str | Path, log_to_file: bool = False, beamline: str = "i11"
+    ):
+        self.log_filepath = Path(log_filepath)
+        self.log_to_file = log_to_file
 
-        if not os.path.exists(self.log_filepath):
-            os.makedirs(os.path.dirname(self.log_filepath), exist_ok=True)
-        elif os.path.exists(self.log_filepath) and (
-            os.path.getsize(self.log_filepath) > 1e7
-        ):
-            os.remove(self.log_filepath)
+        if not self.log_filepath.exists():
+            self.log_filepath.parent.mkdir(parents=True, exist_ok=True)
+        elif self.log_filepath.exists() and (self.log_filepath.stat().st_size > 1e7):
+            self.log_filepath.unlink()
             with open(self.log_filepath, "a+") as f:
-                f.write("Log File for I11 Data Reduction\n")
+                f.write(f"Log File for {beamline} Data Reduction\n")
 
         with open(self.log_filepath, "a+") as f:
             f.write("================================\n")
@@ -26,7 +25,7 @@ class AnalysisLogger:
         if print_to_console:
             print(*args)
 
-        if self.logging:
+        if self.log_to_file:
             with open(self.log_filepath, "a") as f:
                 [f.write(str(m)) for m in args]
                 f.write("\n")
