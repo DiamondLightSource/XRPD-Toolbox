@@ -32,7 +32,7 @@ class NexusToDict:
 
                     self.nexus_dict[key] = data
 
-    def get_dict(self):
+    def get_dict(self) -> dict:
         return self.nexus_dict
 
 
@@ -68,7 +68,7 @@ def get_filenumber_from_nxs(nexus_file: str | Path) -> int:
     return int(filenumber_str)
 
 
-def get_folder_paths(root_folder: str | Path):
+def get_folder_paths(root_folder: str | Path) -> list[str]:
     """get all folder directories within another folder"""
 
     instrument_session_folders = [
@@ -84,7 +84,7 @@ def copy_datapath_to_nexus(
     destination_file: str | Path,
     source_path: str,
     destination_path: str,
-):
+) -> None:
     """
     Copy a detector group from a source NeXus file to a destination NeXus file.
     Overwrites the destination path if it already exists.
