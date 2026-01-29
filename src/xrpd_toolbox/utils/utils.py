@@ -49,7 +49,7 @@ def get_nexus_files(
     instrument_session_folder: str | Path,
     beamline: str = "i15-1",
     exclude: str = "processed",
-):
+) -> list[str]:
     """Get all final data files ending with .nxs in some folder"""
 
     nexus_files = [
