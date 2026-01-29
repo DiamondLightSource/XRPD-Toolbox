@@ -7,6 +7,7 @@ from xrpd_toolbox.utils.energy import beam_energy_to_wavelength, tth_to_q
 from xrpd_toolbox.utils.utils import (
     gaussian,
     get_filenumber_from_nxs,
+    get_folder_paths,
     load_int_array_from_file,
     nexus_file_match,
     normalise,
@@ -95,3 +96,10 @@ def test_load_int_array_from_file_returns_none_when_file_empty():
 
     # Clean up
     os.remove(test_file)
+
+
+def test_get_folder_paths():
+    list_of_paths = get_folder_paths("/")
+
+    assert "/workspaces" in list_of_paths
+    assert isinstance(list_of_paths, list)
