@@ -1,8 +1,8 @@
-import numpy as np
+import os
+
 import pytest
 
 from xrpd_toolbox.i11.mythen import MythenReductionSettings
-from xrpd_toolbox.utils.utils import bin_and_propagate_errors, gaussian
 
 
 @pytest.fixture
@@ -37,26 +37,38 @@ def test_mythen_settings_load_from_toml():
         "/workspaces/XRPD-Toolbox/examples/i11/mythen3_reduction_config.toml"
     )
 
-    print(settings.rebin_step)
+    assert isinstance(settings, MythenReductionSettings)
 
 
-def test_peak_bin_and_propagate_errors():
-    x1 = np.arange(0, 10, 0.1)
-    y1 = gaussian(x1, amp=10.0, cen=5.0, fwhm=1.0, background=0.1)
-    e1 = np.sqrt(y1)
+def test_mythen_toml_save_load(mythen_settings: MythenReductionSettings):
+    file_path = "file.toml"
 
-    x2 = np.arange(0.01, 10.01, 0.1)
-    y2 = gaussian(x2, amp=20.0, cen=5.0, fwhm=1.0, background=0.1)
-    e2 = np.sqrt(y2)
+    mythen_settings.save_to_toml(file_path)
+    loaded_mythen_settings = MythenReductionSettings.load_from_toml(file_path)
 
-    x_combined = np.concatenate((x1, x2))
-    y_combined = np.concatenate((y1, y2))
-    e_combined = np.concatenate((e1, e2))
+    assert mythen_settings == loaded_mythen_settings
 
-    binned_x, binned_y, binned_e = bin_and_propagate_errors(
-        x_combined, y_combined, e_combined, rebin_step=0.1, error_calc="internal"
-    )
+    os.remove(file_path)
 
-    assert len(binned_x) == len(binned_y) == len(binned_e)
-    assert np.amax(binned_y) > np.amax(y1)
-    assert np.amax(binned_y) > np.amax(y2)
+
+def test_mythen_yaml_save_load(mythen_settings: MythenReductionSettings):
+    file_path = "file.yaml"
+
+    mythen_settings.save_to_yaml(file_path)
+    loaded_mythen_settings = MythenReductionSettings.load_from_yaml(file_path)
+
+    assert mythen_settings == loaded_mythen_settings
+
+    os.remove(file_path)
+
+
+def test_mythen_load_fails_when_incorrect_file_extension(
+    mythen_settings: MythenReductionSettings,
+):
+    file_path = "file.txt"
+
+    with pytest.raises(ValueError):
+        mythen_settings.save_to_yaml(file_path)
+
+    with pytest.raises(ValueError):
+        mythen_settings.save_to_toml(file_path)

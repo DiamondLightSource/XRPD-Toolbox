@@ -17,19 +17,20 @@ from xrpd_toolbox.utils.utils import get_entry, load_int_array_from_file
 class SettingsBase(BaseModel):
     @classmethod
     def load_from_toml(cls, file_path: str | Path):
-        with open(file_path, "rb") as f:
-            settings_dict = tomllib.load(f)
+        with open(file_path, "rb") as file:
+            settings_dict = tomllib.load(file)
 
         return cls(**settings_dict)
 
     @classmethod
     def load_from_yaml(cls, file_path: str | Path):
-        settings_dict = yaml.safe_load(open(file_path, "rb"))
+        with open(file_path, "rb") as file:
+            settings_dict = yaml.safe_load(file)
         return cls(**settings_dict)
 
     def save_to_toml(self, file_path: str | Path) -> None:
         if not str(file_path).endswith(".toml"):
-            raise ValueError("file name must end with .toml")
+            raise ValueError("file_path name must end with .toml")
 
         print("Saving configuration to:", file_path)
 
@@ -40,7 +41,7 @@ class SettingsBase(BaseModel):
 
     def save_to_yaml(self, file_path: str | Path) -> None:
         if not str(file_path).endswith(".yaml"):
-            raise ValueError("file name must end with .yaml")
+            raise ValueError("file_path name must end with .yaml")
 
         print("Saving configuration to:", file_path)
 
