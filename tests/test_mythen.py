@@ -1,8 +1,13 @@
 import os
+from pathlib import Path
 
 import pytest
 
 from xrpd_toolbox.i11.mythen import MythenReductionSettings
+
+CONFIG_FILE = (
+    Path(__file__).parent.parent / "examples" / "i11" / "mythen3_reduction_config.toml"
+)
 
 
 @pytest.fixture
@@ -33,9 +38,7 @@ def test_mythen_settings(mythen_settings: MythenReductionSettings):
 
 
 def test_mythen_settings_load_from_toml():
-    settings = MythenReductionSettings.load_from_toml(
-        "/workspaces/XRPD-Toolbox/examples/i11/mythen3_reduction_config.toml"
-    )
+    settings = MythenReductionSettings.load_from_toml(CONFIG_FILE)
 
     assert isinstance(settings, MythenReductionSettings)
 
