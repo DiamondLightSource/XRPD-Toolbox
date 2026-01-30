@@ -101,7 +101,7 @@ def test_load_int_array_from_file_returns_none_when_file_empty():
 def test_get_folder_paths():
     list_of_paths = get_folder_paths("/")
 
-    assert "/workspaces" in list_of_paths
+    assert "/home" in list_of_paths
     assert isinstance(list_of_paths, list)
 
 
