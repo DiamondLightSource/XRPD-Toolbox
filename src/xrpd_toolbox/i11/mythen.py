@@ -21,6 +21,10 @@ from xrpd_toolbox.utils.utils import (
 )
 
 SUPPORTED_FILE_TYPES = ["json", "toml", "yaml"]
+MODULES_IN_DETECTOR = 28
+PIXELS_PER_MODULE = 1280
+PSD_RADIUS = 762  # mm
+MYTHEN_PIXEL_SIZE = 0.05  # mm
 
 
 class SettingsBase(BaseModel):
@@ -140,12 +144,12 @@ class AngularCalibration(SettingsBase):
 
 
 class MythenReductionSettings(SettingsBase):
-    active_modules: list[int] = list(range(28))
+    active_modules: list[int] = list(range(MODULES_IN_DETECTOR))
     bad_modules: list[int] = []
     bad_channel_masking: bool = True
     flatfield_filepath: str | Path = ""
     apply_flatfield: bool = False
-    modules_in_flatfield: list[int] = list(range(28))
+    modules_in_flatfield: list[int] = list(range(MODULES_IN_DETECTOR))
     send_to_ispyb: bool = False
     rebin_step: float = 0.004
     default_counter: int = 0
@@ -157,18 +161,12 @@ class MythenReductionSettings(SettingsBase):
     bad_channels_filepath: str | Path = "/dls_sw/i11/software/mythen/badchannels.txt"
     angcal_filepath: str | Path = ""
 
-    def load_bad_channels(self):
-        if not self.bad_channels_filepath:
-            raise ValueError("Bad channels file path is not set.")
-        self.bad_channels = load_int_array_from_file(self.bad_channels_filepath)
-        return self.bad_channels
-
 
 class MythenDataLoader:
     def __init__(
         self,
         file_path: str | Path,
-        pixels_per_module: int = 1280,
+        pixels_per_module: int = PIXELS_PER_MODULE,
         counter: int = 0,
         mythen_data_path="mythen_nx",
     ):
@@ -250,7 +248,12 @@ class MythenDataLoader:
 
 
 class MythenModule:
-    def __init__(self, data: np.ndarray, pixels_per_modules: int = 1280):
+    def __init__(
+        self,
+        data: np.ndarray,
+        module_id: int,
+        pixels_per_modules: int = PIXELS_PER_MODULE,
+    ):
         self.pixels_per_modules = pixels_per_modules
         self.data = data
 
@@ -263,12 +266,25 @@ class MythenDetector:
     def __init__(
         self,
         file_path: str | Path,
-        settings: MythenReductionSettings | None = None,
         angular_calibration: AngularCalibration | None = None,
+        settings: MythenReductionSettings | None = None,
+        output_directory: str | Path | None = None,
     ):
         self.file_path = file_path
+
+        if not str(self.file_path).lower().endswith(".nxs"):
+            raise ValueError(f"{self.file_path} should be a Nexus File!!")
+
+        if not output_directory:
+            self.output_directory = os.path.join(str(self.file_path), "processed")
+
         self.settings = settings or MythenReductionSettings()
-        self.angular_calibration = angular_calibration
+        self.angular_calibration = angular_calibration or MythenReductionSettings.load(
+            self.settings.angcal_filepath
+        )
+
+        self.bad_channels = self.load_bad_channels()
+        self.bad_channels_to_mask()
 
         # mythen data loader, just loads the data,
         # it has no information about which modules are which
@@ -280,8 +296,53 @@ class MythenDetector:
 
         for n_module, module in enumerate(self.settings.active_modules):
             self.modules[module] = MythenModule(
-                data=self.mythen_data.get_module_data(n_module)
+                data=self.mythen_data.get_module_data(n_module), module_id=module
             )
+
+    def load_bad_channels(self):
+        if not self.settings.bad_channels_filepath:
+            raise ValueError("Bad channels file path is not set.")
+        self.bad_channels = load_int_array_from_file(
+            self.settings.bad_channels_filepath
+        )
+        return self.bad_channels
+
+    def bad_channels_to_mask(self):
+        self.bad_channel_mask = OrderedDict()
+
+        bins = np.arange(
+            0, MODULES_IN_DETECTOR * PIXELS_PER_MODULE + 1, PIXELS_PER_MODULE
+        )
+        indices = (
+            np.digitize(self.bad_channels, bins) - 1
+        )  # subtract 1 because digitize returns 1-based
+
+        bad_channels_per_module = [
+            self.bad_channels[indices == i] for i in range(MODULES_IN_DETECTOR)
+        ]
+
+        module_mask = [
+            bad_channels_per_module[f] - (PIXELS_PER_MODULE * f)
+            for f in range(MODULES_IN_DETECTOR)
+        ]
+
+        print(bad_channels_per_module)
+        print(module_mask)
+
+    def save_to_xye(self):
+        pass
+
+    def save_processed_nexus(self):
+        pass
+
+    def process_step_scan(self):
+        pass
+
+    def process_pump_probe(self):
+        pass
+
+    def process_time_resolved(self):
+        pass
 
 
 def convert_angcal_to_pydantic_json(
@@ -324,14 +385,16 @@ if __name__ == "__main__":
     settings = MythenReductionSettings.load_from_toml(CONFIG_FILE)
     print("Loaded settings:", settings)
 
-    print(DATA_FILE)
+    # print(DATA_FILE)
 
-    MythenDataLoader(DATA_FILE)
+    # MythenDataLoader(DATA_FILE)
+
+    BAD_CHAN_FILE = "/workspaces/XRPD-Toolbox/examples/i11/bad_channels.txt"
 
     angular_calibration = AngularCalibration.load_from_json(ANG_CAL)
 
-    # MythenDetector(
-    #     file_path=DATA_FILE,
-    #     settings=settings,
-    #     angular_calibration=angular_calibration
-    # )
+    settings.bad_channels_filepath = BAD_CHAN_FILE
+
+    MythenDetector(
+        file_path=DATA_FILE, settings=settings, angular_calibration=angular_calibration
+    )

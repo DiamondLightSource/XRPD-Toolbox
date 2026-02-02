@@ -69,7 +69,7 @@ def get_nexus_files(
     """Get all final data files ending with .nxs in some folder"""
 
     nexus_files = [
-        os.path.join(instrument_session_folder, f)
+        os.path.join(str(instrument_session_folder), f)
         for f in os.listdir(instrument_session_folder)
         if nexus_file_match(f, beamline) and (exclude not in f)
     ]
@@ -134,30 +134,22 @@ def normalise_to(data: Iterable[float | int], minval: float | int = 0) -> np.nda
     return (data_array - minval) / (np.amax(data_array) - minval)
 
 
-def normalise(data) -> np.ndarray:
+def normalise(data: np.ndarray | list) -> np.ndarray:
     return (data - np.min(data)) / (np.max(data) - np.min(data))
-
-
-def gaussian(x, amp, cen, fwhm, background) -> np.ndarray:
-    # "1-d gaussian: gaussian(x, amp, cen, fwhm)"
-
-    return (amp / (np.sqrt(2 * np.pi) * fwhm)) * np.exp(
-        -((x - cen) ** 2) / (2 * fwhm**2)
-    ) + background
 
 
 def load_int_array_from_file(filepath: str | Path) -> np.ndarray:
     """
     File format is just a list of integers in a text file, one integer per line.
 
-    If no file, will return no empty array.
+    If no file, will raise
 
     If empty file, will return no empty array.
 
     """
 
     if not os.path.exists(filepath):
-        return np.array([])
+        raise FileNotFoundError(f"{filepath} does not exist")
     elif os.path.getsize(filepath) == 0:
         return np.array([])
     else:
