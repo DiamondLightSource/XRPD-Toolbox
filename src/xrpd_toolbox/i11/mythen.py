@@ -2,6 +2,7 @@ import json
 import math
 import os
 import re
+import sys
 import tomllib
 from collections import OrderedDict
 from pathlib import Path
@@ -19,6 +20,9 @@ from xrpd_toolbox.utils.utils import (
     h5_to_array,
     load_int_array_from_file,
 )
+
+np.set_printoptions(threshold=sys.maxsize)
+
 
 SUPPORTED_FILE_TYPES = ["json", "toml", "yaml"]
 MODULES_IN_DETECTOR = 28
@@ -284,7 +288,7 @@ class MythenDetector:
         )
 
         self.bad_channels = self.load_bad_channels()
-        self.bad_channels_to_mask()
+        self.bad_channel_mask = self.bad_channels_to_mask()
 
         # mythen data loader, just loads the data,
         # it has no information about which modules are which
@@ -308,7 +312,7 @@ class MythenDetector:
         return self.bad_channels
 
     def bad_channels_to_mask(self):
-        self.bad_channel_mask = OrderedDict()
+        bad_channel_mask = OrderedDict()
 
         bins = np.arange(
             0, MODULES_IN_DETECTOR * PIXELS_PER_MODULE + 1, PIXELS_PER_MODULE
@@ -317,17 +321,21 @@ class MythenDetector:
             np.digitize(self.bad_channels, bins) - 1
         )  # subtract 1 because digitize returns 1-based
 
-        bad_channels_per_module = [
+        detector_bad_channels_per_module = [
             self.bad_channels[indices == i] for i in range(MODULES_IN_DETECTOR)
         ]
 
-        module_mask = [
-            bad_channels_per_module[f] - (PIXELS_PER_MODULE * f)
+        module_bad_channels = [
+            detector_bad_channels_per_module[f] - (PIXELS_PER_MODULE * f)
             for f in range(MODULES_IN_DETECTOR)
         ]
 
-        print(bad_channels_per_module)
-        print(module_mask)
+        for module in range(MODULES_IN_DETECTOR):
+            mask = np.ones(PIXELS_PER_MODULE, dtype=bool)
+            mask[module_bad_channels[module]] = False
+            bad_channel_mask[module] = mask
+
+        return bad_channel_mask
 
     def save_to_xye(self):
         pass
