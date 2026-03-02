@@ -639,6 +639,9 @@ class MythenDetector:
     def process_time_resolved(self):
         pass
 
+    def simulate_data(self, calibrant_name: str):
+        pass
+
     def plot_diffraction(self, filepath: str | Path | None = None):
         plt.figure(figsize=(10, 7))
 
@@ -756,13 +759,11 @@ if __name__ == "__main__":
 
     print(PARENT_PATH)
 
-    CONFIG_FILE = (
-        PARENT_PATH / "i11" / "mythen_calibration" / "mythen3_reduction_config.toml"
-    )
+    CONFIG_FILE = "/workspaces/XRPD-Toolbox/config/i11/mythen3_reduction_config.toml"
 
-    DATA_FILE = "/workspaces/XRPD-Toolbox/examples/i11/step_scan/1410289.nxs"
+    DATA_FILE = "//host-home/projects/outputs/step_scan/1410289.nxs"
 
-    ANG_CAL = "/workspaces/XRPD-Toolbox/src/xrpd_toolbox/i11/mythen_calibration/processed/ang_cal_020426_cen_639.5_leastsq_[11, 17, 27]_new.json"  # noqa
+    ANG_CAL = "/host-home/projects/outputs/mythen_calibration/processed/ang_cal_020426_cen_639.5_leastsq_[11, 17, 27]_new.json"  # noqa
 
     settings = MythenSettings.load_from_toml(CONFIG_FILE)
     print("Loaded settings:", settings)
@@ -771,7 +772,7 @@ if __name__ == "__main__":
 
     # MythenDataLoader(DATA_FILE)
 
-    BAD_CHAN_FILE = "/workspaces/XRPD-Toolbox/examples/i11/bad_channels.txt"
+    BAD_CHAN_FILE = "/workspaces/XRPD-Toolbox/config/i11/bad_channels.txt"
 
     angular_calibration = AngularCalibration.load_from_json(ANG_CAL)
     # angular_calibration.beamline_offset = -0.4979739
@@ -781,7 +782,7 @@ if __name__ == "__main__":
     settings.bad_channels_filepath = BAD_CHAN_FILE
 
     # DATA_FILE = "/workspaces/XRPD-Toolbox/examples/i11/step_scan/1414223.nxs"
-    DATA_FILE = "/workspaces/XRPD-Toolbox/examples/i11/angular_calibration/1410289.nxs"
+    DATA_FILE = "/host-home/projects/outputs/angular_calibration/1410289.nxs"
 
     mythen3 = MythenDetector(
         filepath=DATA_FILE, settings=settings, angular_calibration=angular_calibration
