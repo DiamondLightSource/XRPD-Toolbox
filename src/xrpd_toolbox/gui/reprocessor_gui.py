@@ -28,7 +28,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from xrpd_toolbox.i11.mythen import MythenReductionSettings
+from xrpd_toolbox.i11.mythen import MythenSettings
 
 # =========================
 # Worker Thread
@@ -40,10 +40,10 @@ class ProcessingWorker(QThread):
     file_finished = pyqtSignal(Path)
     file_failed = pyqtSignal(Path, str)
 
-    def __init__(self, files: list[Path], settings: MythenReductionSettings) -> None:
+    def __init__(self, files: list[Path], settings: MythenSettings) -> None:
         super().__init__()
         self.files: list[Path] = files
-        self.settings: MythenReductionSettings = settings
+        self.settings: MythenSettings = settings
 
     def run(self) -> None:
         for file in self.files:
@@ -68,7 +68,7 @@ class MainWindow(QWidget):
     def __init__(
         self,
         settings_path: str | Path | None = None,
-        settings: MythenReductionSettings | None = None,
+        settings: MythenSettings | None = None,
         beamline: str = "i11",
         settings_columns: int = 1,
     ) -> None:
@@ -80,11 +80,11 @@ class MainWindow(QWidget):
         self.settings_columns: int = max(1, settings_columns)
 
         if settings is not None:
-            self.settings_model: MythenReductionSettings = settings
+            self.settings_model: MythenSettings = settings
         elif settings_path is not None:
             self.settings_path: Path = Path(settings_path)
-            self.settings_model: MythenReductionSettings = (
-                MythenReductionSettings.load_from_toml(settings_path)
+            self.settings_model: MythenSettings = MythenSettings.load_from_toml(
+                settings_path
             )
         else:
             raise ValueError("Either settings or settings_path must be provided.")
@@ -312,8 +312,8 @@ class MainWindow(QWidget):
     # Collect settings
     # ---------------------
 
-    def collect_settings(self) -> MythenReductionSettings:
-        return MythenReductionSettings(
+    def collect_settings(self) -> MythenSettings:
+        return MythenSettings(
             # threshold=cast(QDoubleSpinBox, self.widgets["threshold"]).value(),
             # max_iterations=cast(QSpinBox, self.widgets["max_iterations"]).value(),
             # normalize=cast(QCheckBox, self.widgets["normalize"]).isChecked(),
@@ -383,7 +383,7 @@ class MainWindow(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    settings = MythenReductionSettings()
+    settings = MythenSettings()
     window = MainWindow(settings=settings, settings_columns=1)
     window.show()
     sys.exit(app.exec_())

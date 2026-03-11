@@ -49,7 +49,7 @@ class PlotCanvas(FigureCanvasQTAgg):
         self._pan_start = None
 
         self.data = data
-        self.raw_data = data.raw_data
+        self.raw_data = data.data
         self.pixels_per_modules = pixels_per_modules
 
         self.current_module = 0
