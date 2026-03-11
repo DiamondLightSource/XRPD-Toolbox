@@ -6,7 +6,7 @@ from collections import OrderedDict
 from collections.abc import Collection, Iterable
 from functools import cached_property
 from pathlib import Path
-from shutil import copy, copy2
+from shutil import copy
 from typing import Literal
 
 import h5py
@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from xrpd_toolbox.utils.messenger import Messenger
 from xrpd_toolbox.utils.mythen_utils import channel_to_angle, modules_to_pixels
-from xrpd_toolbox.utils.peaks import fit_peaks
+from xrpd_toolbox.utils.peaks import closest_indices, fit_peaks
 from xrpd_toolbox.utils.settings import SettingsBase
 from xrpd_toolbox.utils.utils import (
     bin_and_propagate_errors,
@@ -103,6 +103,7 @@ class MythenSettings(SettingsBase):
     active_modules: list[int] = list(range(MODULES_IN_DETECTOR))
     bad_modules: list[int] = []
     bad_channel_masking: bool = True
+    zero_channel_masking: bool = True
     flatfield_filepath: str | Path = ""
     apply_flatfield: bool = False
     modules_in_flatfield: list[int] = list(range(MODULES_IN_DETECTOR))
@@ -471,13 +472,15 @@ class MythenDetector:
         """MythenModule requires quite a lot of info,
         so it's easier to make a contructor of it's kwargs"""
 
+        these_frames = slice(None, None, 2)
+
         return {
-            "data": self.mythen_data.module_data[n_module],
+            "data": self.mythen_data.module_data[n_module][these_frames],
             "conversion": self.calibration[f"module_{nth_active_module}"],
             "beamline_offset": self.calibration.beamline_offset,
             "module_id": nth_active_module,
-            "positions": self.mythen_data.positions,
-            "durations": self.mythen_data.durations,
+            "positions": self.mythen_data.positions[these_frames],
+            "durations": self.mythen_data.durations[these_frames],
             "bad_channel_mask": self.bad_channels.masks[nth_active_module],
         }
 
@@ -566,9 +569,9 @@ class MythenDetector:
         daq.send_file(str(self.xye_filepath_out))  # sends message to GDA
 
         if send_to_ispyb:
-            p = Path(self.filepath)
-            magic_path = p.parent / ".ispyb" / (p.stem + "_mythen_nx/data.dat")
-            copy2(self.xye_filepath_out, magic_path)  # copies to ispyb
+            daq.send_to_ispyb(
+                str(self.filepath), str(self.xye_filepath_out)
+            )  # sends to ispyb
 
     def process_step_scan(self):
         """Analyses the data using the settings provided by the MythenSettings class
@@ -642,7 +645,9 @@ class MythenDetector:
     def simulate_data(self, calibrant_name: str):
         pass
 
-    def plot_diffraction(self, filepath: str | Path | None = None):
+    def plot_diffraction(
+        self, filepath: str | Path | None = None, calibrant: str | None = None
+    ):
         plt.figure(figsize=(10, 7))
 
         tth, counts, error = self.generate_binned_xye(
@@ -651,8 +656,11 @@ class MythenDetector:
             error_calc=self.settings.error_calc,
         )
 
-        si_tth = get_calibrant_peaks("Si", 0.828783)
-        plt.vlines(si_tth, 0, np.amax(counts), color="red")
+        if calibrant is not None:
+            si_tth = get_calibrant_peaks("Si", 0.828783)
+            indx = closest_indices(si_tth, tth)
+            peak_heights = counts[indx]
+            plt.scatter(si_tth, peak_heights, color="red")
 
         plt.errorbar(tth, counts, error, label=self.settings.error_calc)
         plt.legend()
@@ -665,10 +673,7 @@ class MythenDetector:
         plt.show()
         plt.close()
 
-        amps, fit_xpos, fwhms = fit_peaks(tth, counts, si_tth)
-
-        plt.plot(si_tth, fit_xpos - si_tth)
-        plt.show()
+        return tth, counts, error
 
     def plot_diffraction_by_mod(self, filepath: str | Path | None = None):
         plt.figure(figsize=(10, 7))
@@ -691,7 +696,7 @@ class MythenDetector:
 
         plt.xlabel("tth")
         plt.ylabel("Intensity (arb. units)")
-        # plt.legend()
+        plt.legend()
 
         if filepath:
             plt.savefig(filepath)
@@ -766,6 +771,7 @@ if __name__ == "__main__":
     ANG_CAL = "/host-home/projects/outputs/mythen_calibration/processed/ang_cal_020426_cen_639.5_leastsq_[11, 17, 27]_new.json"  # noqa
 
     settings = MythenSettings.load_from_toml(CONFIG_FILE)
+    settings.bad_modules = list(range(27))
     print("Loaded settings:", settings)
 
     # print(DATA_FILE)
@@ -777,17 +783,40 @@ if __name__ == "__main__":
     angular_calibration = AngularCalibration.load_from_json(ANG_CAL)
     # angular_calibration.beamline_offset = -0.4979739
 
-    print(angular_calibration)
-
     settings.bad_channels_filepath = BAD_CHAN_FILE
 
     # DATA_FILE = "/workspaces/XRPD-Toolbox/examples/i11/step_scan/1414223.nxs"
     DATA_FILE = "/host-home/projects/outputs/angular_calibration/1410289.nxs"
 
-    mythen3 = MythenDetector(
-        filepath=DATA_FILE, settings=settings, angular_calibration=angular_calibration
-    )
+    active_modules = list(range(28))
 
-    mythen3.plot_diffraction()
-    mythen3.plot_diffraction_by_mod()
+    for module in range(28):
+        module_name = f"module_{module}"
+        bad_modules = [f for f in active_modules if f != module]
+        settings.bad_modules = bad_modules
+
+        mythen3 = MythenDetector(
+            filepath=DATA_FILE,
+            settings=settings,
+            angular_calibration=angular_calibration,
+        )
+
+        tth, counts, error = mythen3.plot_diffraction(
+            filepath="/host-home/projects/outputs/peak_fits.png", calibrant="Si"
+        )
+
+        si_tth = get_calibrant_peaks("Si", wavelength_in_ang=0.828783)
+        peaks = fit_peaks(tth, counts, si_tth)
+
+        centres, amps, fwhms = map(
+            list, zip(*[(p.centre, p.amplitude, p.fwhm) for p in peaks], strict=True)
+        )
+
+        plt.plot(si_tth, centres - si_tth)
+        plt.ylabel("Fit Peak - Calc Peak (deg)")
+        plt.xlabel("tth of peak (deg)")
+        plt.savefig(f"/host-home/projects/outputs/peak_error_module_{module}.png")
+        plt.show()
+
+        # mythen3.plot_diffraction_by_mod()
     # print(mythen3.counts_times)

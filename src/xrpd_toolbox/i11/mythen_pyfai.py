@@ -49,16 +49,14 @@ class AngularCalibrationPyFAI:
         self,
         filepath: str | Path,
         wavelength_in_m: float,
-        calibrant_name: Literal["Si", "LaB6"],
+        calibrant_name: Literal["Si", "LaB6", "CeO2"],
     ):
         self.filepath = filepath
         self.data_loader = MythenDataLoader(filepath=filepath)
         self.data = self.data_loader.module_data
         self.calibrant_name = calibrant_name
-        calibrant = get_calibrant(self.calibrant_name)
-        calibrant.wavelength = wavelength_in_m
-
-        print(self.data_loader.durations)
+        self.calibrant = get_calibrant(self.calibrant_name)
+        self.calibrant.wavelength = wavelength_in_m
 
         self.modules = {}
         for name, module_dataset in enumerate(self.data):
@@ -72,8 +70,35 @@ class AngularCalibrationPyFAI:
             detector_module.mask = mask.reshape(-1, 1)
             self.modules[name] = detector_module
 
+        trans = ExtendedTransformation(
+            dist_expr="dist",
+            poni1_expr="poni1",
+            poni2_expr="poni2",
+            rot1_expr="rot1",
+            rot2_expr="pi*(offset+scale*angle)/180.",
+            rot3_expr="0.0",
+            wavelength_expr="wavelength",
+            param_names=["dist", "poni1", "poni2", "rot1", "offset", "scale", "nrj"],
+            pos_names=["angle"],
+            constants={"wavelength": wavelength_in_m},
+        )
+
+        peaks = self.peak_picking(0, 0)
+        print(peaks)
+
+        step_idx = 1
+        # Approximate offset for the module #0 at 0°
+        print(
+            f"Approximated offset for the first module at step {step_idx}: ",
+            self.get_position(step_idx),
+        )
+
+    def single_geometry_calibration(self, wavelength_in_m: float):
+        for name, module_dataset in enumerate(self.data):
+            detector_module = self.modules[name]
             initial = Geometry(detector=detector_module, wavelength=wavelength_in_m)
 
+            plt.title(f"Module {name}")
             plt.imshow(module_dataset, cmap=cm.inferno, norm=LogNorm(), origin="lower")  # type: ignore
             plt.show()
 
@@ -82,7 +107,7 @@ class AngularCalibrationPyFAI:
             # print(peak_indices)
             beam_centre_x = -10  # x-coordinate of the beam-center in pixels
             beam_centre_y = 1  # y-coordinate of the beam-center in pixels
-            distance = 700  # This is the distance in mm (unit used by Fit2d)
+            distance = 762  # This is the distance in mm (unit used by Fit2d)
             rot3 = -0.78539816339
 
             initial.setFit2D(distance, beam_centre_x, beam_centre_y)
@@ -90,7 +115,7 @@ class AngularCalibrationPyFAI:
             single_geometry = SingleGeometry(
                 "pe2AD",
                 module_dataset,
-                calibrant=calibrant,
+                calibrant=self.calibrant,
                 detector=detector_module,
                 geometry=initial,
             )
@@ -102,72 +127,12 @@ class AngularCalibrationPyFAI:
                 single_geometry.extract_cp(max_rings=rings)
                 # Refine the geometry ... here in SAXS geometry,
                 # the rotation is fixed in orthogonal setup
-                single_geometry.geometry_refinement.refine2(fix=["rot3", "wavelength"])
+                single_geometry.geometry_refinement.refine2(fix=["wavelength"])
 
-            # poni_name = "geometry.poni"
+    def get_data(self, module_id, frame_id: int):
+        return self.data[module_id][frame_id]
 
-        trans = ExtendedTransformation(
-            dist_expr="dist",
-            poni1_expr="poni1",
-            poni2_expr="poni2",
-            rot1_expr="rot1",
-            rot2_expr="pi*(offset+scale*angle)/180.",
-            rot3_expr="0.0",
-            wavelength_expr="wavelength",
-            param_names=["dist", "poni1", "poni2", "rot1", "offset", "scale", "nrj"],
-            pos_names=["angle"],
-            constants={"wavelength": wavelength},
-        )
-
-        print(trans)
-
-        self.fig, self.ax = plt.subplots()
-        self.line = self.ax.plot(self.data[0][250])[0]
-        ligne = plt.Line2D(  # type: ignore
-            xdata=[640, 640],
-            ydata=[-500, 1000],
-            figure=self.fig,
-            linestyle="--",
-            color="red",
-            axes=self.ax,
-        )
-        self.ax.add_line(ligne)
-        self.ax.set_title("spectrum")
-        self.fig.show()
-
-        # interactive_plot = widgets.interactive(
-        #     self.update,
-        #     module_id=(0, len(self.data) - 1),
-        #     frame_id=(0, self.data[0].shape[0] - 1),
-        # )
-        plt.ylim((0, 1e6))
-        plt.show()
-
-        # Work with the first module corresponding to:
-        name = 0
-        print(name)
-        ds = self.data[name]
-        module = self.modules[name]
-
-        # Use the previous widget to select:
-        ## the index where the beam-center is in the middle of the module
-        zero_pos = 36
-
-        ## The frame index where the first LaB6 peak enters
-        # the right-hand side of the spectrum
-        peak_zero_start = 74
-
-        ## The frame index where this first LaB6 leaves
-        # the spectrum or the second LaB6 peak appears:
-        peak_zero_end = 94
-
-        # The frames between peak_zero_start and peak_zero_end
-        # will be used to calibrate roughly the goniometer
-        # and used later for finer peak extraction
-
-        print(ds, module, zero_pos, peak_zero_start, peak_zero_end)
-
-    def get_position(self, idx):
+    def get_position(self, idx: int):
         "Returns the postion of the goniometer for the given frame_id"
         return self.data_loader.positions[idx]
 
@@ -208,7 +173,7 @@ class AngularCalibrationPyFAI:
 
 
 if __name__ == "__main__":
-    filepath = "/workspaces/XRPD-Toolbox/examples/i11/angular_calibration/1410290.nxs"
+    filepath = "/host-home/projects/outputs/angular_calibration/1410290.nxs"
     wavelength = 0.828783 * 1e-10  # 0.828773
     calibrant_name = "Si"
 

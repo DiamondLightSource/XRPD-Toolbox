@@ -1,6 +1,7 @@
 import json
 from collections import deque
 from pathlib import Path
+from shutil import copy2
 from time import sleep
 
 import stomp
@@ -166,17 +167,7 @@ class Messenger:
             sleep(interval)
             c += 1
 
-
-# if __name__ == "__main__":
-#     # messenger = Messenger(
-#     #     beamline="i11", port=61613, username="guest", password="guest"
-#     # )
-#     # messenger.listen()
-
-#     m = Messenger(
-#         host="i11-control",
-#         port=61613,
-#         destination=None,
-#         auto_connect=True,
-#     )
-#     m.listen()
+    def send_to_ispyb(self, original_filepath: str, filepath_out: str) -> None:
+        p = Path(original_filepath)
+        magic_path = p.parent / ".ispyb" / (p.stem + "_mythen_nx/data.dat")
+        copy2(filepath_out, magic_path)  # copies to ispyb

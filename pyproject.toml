@@ -28,8 +28,8 @@ dependencies = [
     "PyQt5",
     "Dans_Diffraction",
     "stomp.py",
+    "gql",
     "ipywidgets",
-    "pint",
 
 ] # Add project dependencies here, e.g. ["click", "numpy"]
 dynamic = ["version"]

@@ -1305,7 +1305,7 @@ class I11Reduction:
         if block is True:
             plt.close()
 
-    def plot_modules_by_ring(self, mask=(), block=True):
+    def plot_modules_by_ring(self, mask=(), output_folder="./outputs", block=True):
         plt.figure(figsize=(10, 4))
 
         modules_min_max = {}
@@ -1327,7 +1327,7 @@ class I11Reduction:
         plt.ylabel("Ring number")
         plt.yticks([0, 1])
         plt.xlabel("Angle (tth)")
-        plt.savefig("./outputs/module_arrangment.png")
+        plt.savefig(os.path.join(output_folder, "module_arrangment.png"))
         plt.show(block=block)
         if block is True:
             plt.close()
@@ -1372,7 +1372,7 @@ class I11Reduction:
         ax2.scatter(list(self.good_modules), module_sizes)
         ax2.set_ylabel("Size (mm)")
         ax1.set_xlabel("Module")
-        plt.savefig("./outputs/sizes.png")
+        plt.savefig(os.path.join(output_folder, "sizes.png"))
         plt.close()
 
         for n_mod in self.active_modules[0:-1]:
@@ -1416,8 +1416,7 @@ class I11Reduction:
         plt.plot(np.array(mod2spans) * mm_per_degree)
         plt.ylabel("size (mm)")
         plt.xlabel("Index from module")
-        plt.savefig("./outputs/module_compare.png")
-
+        plt.savefig(os.path.join(output_folder, "module_compare.png"))
         plt.show()
 
     def plot_by(self, parameters=(), x="tth", at_a_time=False):

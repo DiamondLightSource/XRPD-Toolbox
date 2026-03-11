@@ -1,6 +1,7 @@
 from collections.abc import Collection
 
 import numpy as np
+import peakutils
 from pydantic import BaseModel
 from scipy.optimize import curve_fit
 
@@ -49,10 +50,12 @@ def multi_gaussian(
     return intensity
 
 
-def fit_peaks(x: np.ndarray, y: np.ndarray, x_pos: Collection[int | float]):
-    amps, x_positions, fwhms = [], [], []
+def fit_peaks(
+    x: np.ndarray, y: np.ndarray, initial_x_pos: Collection[int | float]
+) -> list[Peak]:
+    fitted_peaks = []
 
-    for x_guess in x_pos:
+    for x_guess in initial_x_pos:
         try:
             width_guess = 0.03
             # Estimate amplitude from nearest data point
@@ -69,24 +72,43 @@ def fit_peaks(x: np.ndarray, y: np.ndarray, x_pos: Collection[int | float]):
             y_fit = y[start_idx:end_idx]
 
             if len(y_fit) == 0:
-                x_positions.append(np.nan)
-                amps.append(np.nan)
-                fwhms.append(np.nan)
+                fitted_peaks.append(Peak(centre=np.nan, amplitude=np.nan, fwhm=np.nan))
                 continue
 
             popt, _ = curve_fit(gaussian, x_fit, y_fit, p0=p0, maxfev=10000)
-
-            x_positions.append(popt[0])  # cen
-            amps.append(popt[1])  # amp
-            fwhms.append(popt[2])  # fwhm (actually sigma in your formula)
+            fitted_peaks.append(Peak(centre=popt[0], amplitude=popt[1], fwhm=popt[2]))
 
         except RuntimeError:
-            x_positions.append(np.nan)
-            amps.append(np.nan)
-            fwhms.append(np.nan)
+            fitted_peaks.append(Peak(centre=np.nan, amplitude=np.nan, fwhm=np.nan))
 
-    return (
-        np.array(amps),
-        np.array(x_positions),
-        np.array(fwhms),
-    )
+    return fitted_peaks
+
+
+def find_and_fit_peaks(x: np.ndarray, y: np.ndarray) -> list[Peak]:
+    """function to get the centre peaks given without guessing"""
+
+    y_smoothed = np.convolve(
+        y, np.ones(5), mode="same"
+    )  # smooth the data to reduce noise
+
+    threshold = np.amax(y_smoothed) / 20
+    indexes = peakutils.indexes(y_smoothed, thres=threshold, min_dist=30)
+
+    initial_x_pos = x[indexes]
+    fitted_peaks = fit_peaks(x, y_smoothed, initial_x_pos=initial_x_pos)
+
+    return fitted_peaks
+
+
+def closest_indices(arr1, arr2):
+    """
+    For each value in arr1, find the index of the closest value in arr2.
+    Returns an array of indices with the same shape as arr1.
+    """
+    arr1 = np.asarray(arr1)
+    arr2 = np.asarray(arr2)
+    # Broadcast arr1 and arr2 to compute pairwise differences
+    diffs = np.abs(arr1[..., np.newaxis] - arr2)
+    # Find the index of the minimum difference along the last axis (arr2)
+    idx = np.argmin(diffs, axis=-1)
+    return idx

@@ -241,19 +241,6 @@ class AngularCalibrateMythen:
 
         return out
 
-    def closest_indices(self, arr1, arr2):
-        """
-        For each value in arr1, find the index of the closest value in arr2.
-        Returns an array of indices with the same shape as arr1.
-        """
-        arr1 = np.asarray(arr1)
-        arr2 = np.asarray(arr2)
-        # Broadcast arr1 and arr2 to compute pairwise differences
-        diffs = np.abs(arr1[..., np.newaxis] - arr2)
-        # Find the index of the minimum difference along the last axis (arr2)
-        idx = np.argmin(diffs, axis=-1)
-        return idx
-
     def fit_peaks_across_delta(
         self,
         delta_points,
@@ -701,7 +688,7 @@ class AngularCalibrateMythen:
             params.add(
                 f"centre_{mod}",
                 value=self.module_centre,
-                vary=True,
+                vary=False,
                 min=self.module_centre - 2,
                 max=self.module_centre + 2,
             )  # maybe 640 or 639.5?
@@ -751,7 +738,7 @@ class AngularCalibrateMythen:
                     color="red",
                 )
             peak_fits[str(module)] = peak_data_gradient
-            plt.savefig(f"./outputs/peak_fits_{module}.png")
+            plt.savefig(f"/host-home/projects/outputs/peak_fits_{module}.png")
             plt.close()
 
         mean_grads = []
@@ -778,10 +765,10 @@ class AngularCalibrateMythen:
         plt.ylabel("Mean Gradient Of Peak Fit pixel/delta")
         plt.xlabel("Module number")
         plt.grid(True)
-        plt.savefig("./outputs/gradient.png")
+        plt.savefig("/host-home/projects/outputs/gradient.png")
         plt.close()
 
-        peak_fits.to_csv("./outputs/peak_gradients.csv")
+        peak_fits.to_csv("/host-home/projects/outputs/peak_gradients.csv")
 
     def remove_bad_modules(self, fitted_peaks_for_modules: dict):
         for bad_module in self.bad_modules:
@@ -916,9 +903,7 @@ class AngularCalibrateMythen:
 
         self.active_modules = list(range(28))
         self.bad_modules = [
-            11,
             17,
-            27,
         ]  # 11 is wobbling?, 17 is dead, 27 is wobbling?
         self.good_modules = [
             f for f in self.active_modules if f not in self.bad_modules
@@ -1110,8 +1095,8 @@ class AngularCalibrateMythen:
                 execute_reduction=True,
             )
 
-            # print(analysis.deltas)
-            # quit()
+            for module in range(28):
+                print(analysis.module_angular_cal[module])
 
             basename = os.path.basename(check_file)
 
@@ -1120,10 +1105,10 @@ class AngularCalibrateMythen:
                 tol=0.04,
                 filepath=f"/host-home/projects/outputs/roi_{basename}.png",
             )
-            # analysis.plot_diffraction_by_mod(filepath=f"./outputs/diff_{basename}.png") # noqa
+            analysis.plot_diffraction_by_mod(filepath=f"./outputs/diff_{basename}.png")  # noqa
             # analysis.plot_diffraction()
 
-            analysis.plot_modules_by_ring()
+            analysis.plot_modules_by_ring(output_folder="/host-home/projects/outputs")
             # analysis.plot_by(["frame"])
 
 
