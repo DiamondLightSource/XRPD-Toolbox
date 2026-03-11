@@ -1,11 +1,11 @@
-from _collections_abc import Iterable
+from collections.abc import Iterable
 from typing import Literal
 
 import numpy as np
 
 
 def beam_energy_to_wavelength(
-    beam_energy: float | int, unit: Literal["kev", "ev"] = "kev"
+    beam_energy: float | int, unit: Literal["keV", "eV", "kev", "ev"] = "kev"
 ) -> float:
     """
 
