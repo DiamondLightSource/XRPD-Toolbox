@@ -69,6 +69,19 @@
             "source": "${localEnv:HOME}${localEnv:USERPROFILE}",
             "target": "/host-home",
             "type": "bind"
+        },
+        // Mount facility directories if present on the host (Docker will create
+        // the host directory if it does not exist). These ensure /dls and
+        // /dls_sw are available inside the container when present on the host.
+        {
+            "source": "/dls",
+            "target": "/dls",
+            "type": "bind"
+        },
+        {
+            "source": "/dls_sw",
+            "target": "/dls_sw",
+            "type": "bind"
         }
     ],
     // Mount the parent as /workspaces so we can pip install peers as editable
