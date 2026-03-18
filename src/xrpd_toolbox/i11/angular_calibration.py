@@ -495,9 +495,9 @@ class AngularCalibrateMythen:
             # max_dist = 13.5
 
             # distance = abs(module_to_analyse - 14)
-            # normalized = 1 - (distance / max_dist)
+            # normalised = 1 - (distance / max_dist)
 
-            # resid_for_module = diff * ((normalized) * 100)
+            # resid_for_module = diff * ((normalised) * 100)
             resid_for_module = diff
 
             resid_for_all_modules = np.append(resid_for_all_modules, resid_for_module)
@@ -1119,9 +1119,9 @@ def module_distance(module: int):
     # Normalize so:
     # distance = 0   → red
     # distance = max → blue
-    normalized = 1 - (distance / max_dist)
+    normalised = 1 - (distance / max_dist)
 
-    return normalized
+    return normalised
 
 
 def plot_convs(conv: pd.DataFrame, steps):
@@ -1135,9 +1135,9 @@ def plot_convs(conv: pd.DataFrame, steps):
         if mod in [11]:
             continue
 
-        normalized = module_distance(mod)
+        normalised = module_distance(mod)
 
-        color = cmap(normalized)
+        color = cmap(normalised)
 
         if mod > 13:
             line = "--"

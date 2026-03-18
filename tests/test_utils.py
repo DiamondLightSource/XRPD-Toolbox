@@ -39,7 +39,7 @@ def test_normalise():
 
 def test_gaussian():
     x = np.linspace(0, 10, 100)
-    y = gaussian(x, cen=5.0, amp=22.0, fwhm=1.0)
+    y = gaussian(x, amplitude=22.0, centre=5.0, fwhm=1.0)
     assert len(y) == len(x)
     integral = integrate.simpson(y, x)
     assert np.isclose(integral, 22.0, atol=0.5)
@@ -74,7 +74,7 @@ def test_load_int_array_from_file_returns_array_when_contains_ints():
 
 
 def test_load_int_array_from_file_returns_none_when_file_doesnt_exist():
-    test_file = "nob_existent.txt"
+    test_file = "non_existent.txt"
 
     # Test loading the array
     result = load_int_array_from_file(test_file)
@@ -108,7 +108,7 @@ def test_get_folder_paths():
 def test_find_and_fit_peaks_with_one_peak():
     np.random.seed(0)  # For reproducibility
     x = np.linspace(0, 10, 100)
-    y = gaussian(x, cen=5.0, amp=1.0, fwhm=1.0)
+    y = gaussian(x, amplitude=1.0, centre=5.0, fwhm=1.0)
 
     noise = np.random.normal(0, 0.02, size=y.shape)
     y_noisy = y + noise
@@ -126,7 +126,7 @@ def test_find_and_fit_peaks_with_n_peaks():
     y_intensity = np.zeros_like(x)
 
     for n, peak_cen in enumerate(np.linspace(20, 80, 4)):
-        peak_intensity = gaussian(x, cen=peak_cen, amp=n, fwhm=1.0)
+        peak_intensity = gaussian(x, amplitude=n, centre=peak_cen, fwhm=1.0)
         y_intensity = y_intensity + peak_intensity
 
     noise = np.random.normal(0, 0.02, size=y_intensity.shape)

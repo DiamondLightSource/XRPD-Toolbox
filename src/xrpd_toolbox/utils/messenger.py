@@ -124,11 +124,13 @@ class Messenger:
             self.conn.subscribe(destination=self.destination, id=1, ack="auto")
 
     def send_file(self, path):
+        """Use this when you want dawn to open and plot a file"""
         message = json.dumps({"filePath": path})
         destination = "/topic/org.dawnsci.file.topic"
         self._send_message(destination, message)
 
     def send_start(self, path):
+        """use this in when doing live processing and it has started"""
         message = json.dumps(
             {"filePath": path, "status": "STARTED", "swmrStatus": "ENABLED"}
         )
@@ -136,6 +138,8 @@ class Messenger:
         self._send_message(destination, message)
 
     def send_update(self, path):
+        """use this in when doing live processing and it has started"""
+
         message = json.dumps(
             {"filePath": path, "status": "UPDATED", "swmrStatus": "ACTIVE"}
         )
@@ -171,3 +175,13 @@ class Messenger:
         p = Path(original_filepath)
         magic_path = p.parent / ".ispyb" / (p.stem + "_mythen_nx/data.dat")
         copy2(filepath_out, magic_path)  # copies to ispyb
+
+
+# if __name__ == "__main__":
+#     client = Messenger("i15-1", broker="rabbitmq", username="guest", password="guest")
+
+#     print("djsdnsj")
+
+#     print(client.host)
+
+#     client._send_message("/topic/public.worker.event", "fff")

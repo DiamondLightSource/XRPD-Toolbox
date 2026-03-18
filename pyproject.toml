@@ -25,7 +25,7 @@ dependencies = [
     "pyyaml",
     "toml",
     "PyQt6",
-    "PyQt5",
+    # "PyQt5",
     "Dans_Diffraction",
     "stomp.py",
     "gql",

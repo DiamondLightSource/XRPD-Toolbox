@@ -3,7 +3,8 @@
     "name": "Python 3 Developer Container",
     "build": {
         "dockerfile": "../Dockerfile",
-        "target": "developer"
+        "target": "developer",
+        "platform": "linux/amd64"
     },
     "remoteEnv": {
         // Allow X11 apps to run inside the container
@@ -73,5 +74,5 @@
     // Mount the parent as /workspaces so we can pip install peers as editable
     "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspaces,type=bind",
     // After the container is created, recreate the venv then make pre-commit first run faster
-    "postCreateCommand": "uv venv --clear && uv sync && pre-commit install --install-hooks && echo 'export DISPLAY=:0' >> ~/.bashrc"
+    "postCreateCommand": "uv venv --clear && uv sync && pre-commit install --install-hooks"
 }
