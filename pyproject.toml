@@ -21,6 +21,16 @@ dependencies = [
     "pandas",
     "lmfit",
     "peakutils",
+    "PyCifRW",
+    "pyyaml",
+    "toml",
+    "PyQt6",
+    # "PyQt5",
+    "Dans_Diffraction",
+    "stomp.py",
+    "gql",
+    "ipywidgets",
+
 ] # Add project dependencies here, e.g. ["click", "numpy"]
 dynamic = ["version"]
 license.file = "LICENSE"
