@@ -120,7 +120,7 @@ data_reduction_mode_mapping = {0: "step_scan", 1: "time_resolved", 2: "pump_prob
 
 class MythenSettings(XRPDBaseModel):
     active_modules: list[int] = list(range(MODULES_IN_DETECTOR))
-    bad_modules: list[int] = [4, 11, 17, 24]
+    bad_modules: list[int] = [4, 11, 17, 27]
     bad_channel_masking: bool = True
     zero_channel_masking: bool = True
     flatfield_filepath: str | Path = ""
