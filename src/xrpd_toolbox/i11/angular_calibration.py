@@ -18,7 +18,13 @@ from xrpd_toolbox.i11.mythen import (
     MythenDetector,
     MythenSettings,
 )
-from xrpd_toolbox.i11.mythen3_reduction_legacy import I11Reduction
+from xrpd_toolbox.utils.mythen_utils import (
+    calc_intial_module_conv,
+    calc_starting_module_offset,
+    channel_to_angle,
+    # paired_modules,
+    read_singular_angcal_files,
+)
 from xrpd_toolbox.utils.utils import load_int_array_from_file, rebin_together
 
 
@@ -36,48 +42,6 @@ def top_n_recurring(arr, n):
     return top_n
 
 
-def paired_modules():
-    """
-    Given a list of module numbers, return a list of (a, b) pairs such that
-    a and b are paired as described: 0-27, 1-26, 2-25, ..., 13-14.
-    Only pairs where both a and b are in the input list are returned.
-    """
-
-    modules = list(range(28))
-
-    modules = np.array(modules)
-    n = modules.max()
-    pairs = []
-    for m in modules:
-        pair = n - m
-        if pair in modules and m <= pair:
-            pairs.append((int(m), int(pair)))
-
-    pairs = np.array(pairs)
-
-    return pairs
-
-
-def calc_starting_module_offset(initial_module=0.45, offset=2.5):
-    """Used for calculatign the intial centres of each of the modules"""
-
-    module_pairs = paired_modules()
-    module_offsets_dict = {}
-
-    for n, module_pair in enumerate(module_pairs[::-1]):
-        print(module_pair)
-
-        ring_2_cen = (n * 5) + initial_module
-        ring_1_cen = ring_2_cen + offset
-
-        module_offsets_dict[int(module_pair[1])] = ring_2_cen
-        module_offsets_dict[int(module_pair[0])] = ring_1_cen
-
-    print(module_offsets_dict)
-
-    return module_offsets_dict
-
-
 def index_of_closest(arr, value):
     """
     Return the index of the closest value in arr to the given value.
@@ -85,18 +49,6 @@ def index_of_closest(arr, value):
     arr = np.asarray(arr)
     idx = np.abs(arr - value).argmin()
     return idx
-
-
-def calc_intial_module_conv(conv=6.5e-05):
-    module_conv_dict = {}
-
-    for mod in range(28):
-        if mod > 13:
-            module_conv_dict[mod] = -conv
-        else:
-            module_conv_dict[mod] = conv
-
-    return module_conv_dict
 
 
 def gaussian(x: np.array, cen: float, amp: float, fwhm: float):
@@ -264,7 +216,7 @@ class AngularCalibrateMythen:
 
             module_pixel_number = np.arange(self.STRIPS_PER_MODULE, dtype=np.int64)
 
-            raw_tth = I11Reduction.channel_to_angle(
+            raw_tth = channel_to_angle(
                 module_pixel_number, centre, conv, offset, beamline_offset
             )
 
@@ -482,7 +434,7 @@ class AngularCalibrateMythen:
             conv = params[f"conv_{module_to_analyse}"]
             offset = params[f"offset_{module_to_analyse}"]
 
-            raw_tth = I11Reduction.channel_to_angle(
+            raw_tth = channel_to_angle(
                 module_dataframe["pixel"], centre, conv, offset, beamline_offset
             )
 
@@ -939,8 +891,8 @@ class AngularCalibrateMythen:
         )
 
         ang_cal = "/host-home/projects/outputs/mythen_calibration/processed/ang_cal_171125.off"  # noqa
-        self.module_angular_cal, self.beamline_offset = (
-            I11Reduction.read_singular_angcal_files(ang_cal)
+        self.module_angular_cal, self.beamline_offset = read_singular_angcal_files(
+            ang_cal
         )  # ["offset"], module_cal["conv"], module_cal["centre"]
 
         bad_channels = load_int_array_from_file(
@@ -1061,8 +1013,8 @@ class AngularCalibrateMythen:
         # quit()
 
         pydantic_dict = self.results_dict_to_pydantic(self.results_dict)
-        pydantic_model = AngularCalibration(**pydantic_dict)
-        pydantic_model.save_to_json(angcal_filepath.replace(".off", "_new.json"))
+        angular_calibration = AngularCalibration.model_validate(pydantic_dict)
+        angular_calibration.save_to_json(angcal_filepath.replace(".off", "_new.json"))
 
         # convert_angcal_to_new_pydantic_json(
         #     angcal_filepath.replace(".off", ".json"),
@@ -1075,41 +1027,24 @@ class AngularCalibrateMythen:
             "/host-home/projects/outputs/step_scan/1414223.nxs",
         ]
 
-        for check_file in check_files:
-            analysis = I11Reduction(
-                filepath=check_file,
-                reduced_nxs_filepath_out=None,
-                xye_filepath_out=None,
-                out_directory="/host-home/projects/outputs/mythen_calibration",
-                config_filepath="/workspaces/XRPD-Toolbox/config/i11/mythen3_reduction_config.toml",
-                beam_energy=None,
-                data_reduction_mode=0,
-                bad_frames=[],
-                bad_modules=self.bad_modules,  # [9,17,24],
-                beamline_offset=None,
-                active_modules=list(range(28)),
-                flatfield_filepath=None,
-                apply_flatfield=None,
-                angcal_filepath=angcal_filepath,
-                filename_suffix=f"_new_cal_{self.module_centre}",
-                execute_reduction=True,
+        settings = MythenSettings(bad_modules=[17])
+
+        for data_file in check_files:
+            basename = os.path.basename(data_file)
+
+            analysis = MythenDetector(
+                filepath=data_file,
+                settings=settings,
+                angular_calibration=angular_calibration,
             )
-
-            for module in range(28):
-                print(analysis.module_angular_cal[module])
-
-            basename = os.path.basename(check_file)
 
             analysis.plot_by_region_of_interest(
                 observed_reflections_in_tth,
                 tol=0.04,
                 filepath=f"/host-home/projects/outputs/roi_{basename}.png",
             )
-            analysis.plot_diffraction_by_mod(filepath=f"./outputs/diff_{basename}.png")  # noqa
-            # analysis.plot_diffraction()
 
-            analysis.plot_modules_by_ring(output_folder="/host-home/projects/outputs")
-            # analysis.plot_by(["frame"])
+            analysis.plot_diffraction_by_mod()
 
 
 def module_distance(module: int):

@@ -647,7 +647,12 @@ class Structure(RefinementBaseModel):
         radiation: DataType = "xray",
         multiplicity_method: bool = False,
     ) -> tuple[list, np.ndarray, np.ndarray, np.ndarray]:
-        """calculates peaks"""
+        """calculates peaks
+
+        returns:
+          hkl, f_abs, peak_centres_tthdeg, intensity
+
+        """
 
         reciprocal_lattice_matrix = self.reciprocal_lattice_matrix()
         rotations, translations = self.get_symmetry_operations()

@@ -12,7 +12,9 @@ from typing import Literal
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from h5py import Dataset, File
+from matplotlib.gridspec import GridSpec
 from pydantic import Field, field_validator
 
 from xrpd_toolbox import BASE_PATH
@@ -410,6 +412,20 @@ class MythenModule:
     #     """returns a 1d array of integers between 0 and 1280"""
     #     return PIXEL_NUMBER
 
+    def to_dataframe(self):
+
+        module_df = pd.DataFrame(
+            columns=["raw_tth", "tth", "counts", "error", "error", "mask"]
+        )
+        module_df["raw_tth"] = self.raw_tth_2d.flatten()
+        module_df["position"] = self.positions_2d.flatten()
+        module_df["tth"] = self.unmasked_tth
+        module_df["counts"] = self.unmasked_counts
+        module_df["error"] = self.unmasked_error
+        module_df["mask"] = self.mask_2d.flatten()
+
+        return module_df
+
     @cached_property
     def raw_tth(self) -> np.ndarray:
         """this calculated the module raw tth, ie the tth of the detector
@@ -421,21 +437,26 @@ class MythenModule:
 
     @cached_property
     def positions_2d(self):
-        print(len(self.positions))
-        positions_2d = np.broadcast_to(self.positions, self.data.shape)
+        # positions_2d = np.broadcast_to(self.positions, self.data.shape)
+        positions_2d = np.broadcast_to(self.positions[:, np.newaxis], self.data.shape)
         return positions_2d
 
     @cached_property
-    def duration_2d(self):
+    def duration_2d(self) -> np.ndarray:
         duration_2d = np.broadcast_to(self.durations[:, np.newaxis], self.data.shape)
         return duration_2d
+
+    @cached_property
+    def raw_tth_2d(self) -> np.ndarray:
+        raw_tth_2d = np.broadcast_to(self.raw_tth, self.data.shape)
+        return raw_tth_2d
 
     @cached_property
     def tth_2d(self) -> np.ndarray:
         """Creates an array with the same shape as the data,
         with the tth values at the corresponding indexes"""
 
-        tth_2d = np.broadcast_to(self.raw_tth, self.data.shape)
+        tth_2d = self.raw_tth_2d
         tth_2d = tth_2d + self.positions[:, None]
         return tth_2d
 
@@ -446,6 +467,10 @@ class MythenModule:
 
         mask_2d = np.broadcast_to(self.bad_channel_mask, self.data.shape)
         return mask_2d
+
+    @cached_property
+    def unmaked_raw_tth(self):
+        return self.raw_tth_2d.flatten()
 
     @cached_property
     def unmasked_counts(self) -> np.ndarray:
@@ -574,6 +599,9 @@ class MythenDetector:
 
     def get_module(self, mod: int) -> MythenModule:
         return self.modules[mod]
+
+    def get_module_dataframe(self, mod: int) -> pd.DataFrame:
+        return self.get_module(mod).to_dataframe()
 
     def contruct_modules(self):
         self.modules = OrderedDict()
@@ -821,6 +849,60 @@ class MythenDetector:
         plt.show()
         plt.close()
 
+    def plot_by_region_of_interest(
+        self, peaks: list[float], tol: float = 0.03, filepath: str | None = None
+    ):
+        fig = plt.figure(figsize=(15, 10))
+
+        max_rows = 4
+        max_cols = 4
+
+        gs = GridSpec(max_rows, max_cols, figure=fig)  # upper bound on plots
+
+        for n, peak in enumerate(np.sort(peaks)):
+            if n > 15:
+                break
+
+            row = n // max_rows
+            col = n % max_cols
+
+            ax = fig.add_subplot(gs[row, col])
+
+            for module in self.good_modules:
+                module_data = self.get_module(module)
+
+                if (peak + tol) < np.amin(module_data.tth) or (peak - tol) > np.amax(
+                    module_data.tth
+                ):
+                    continue  # no overlap with this module, skip it
+
+                module_dataframe = module_data.to_dataframe()
+                module_dataframe = module_dataframe[~module_dataframe["mask"]]
+
+                region_of_interest = module_dataframe[
+                    (module_dataframe["tth"] > peak - tol)
+                    & (module_dataframe["tth"] < peak + tol)
+                ]
+
+                ax.scatter(
+                    region_of_interest["tth"],
+                    region_of_interest["counts"],
+                    label=str(module),
+                )
+                ax.vlines(
+                    peak,
+                    np.min(region_of_interest["counts"]),
+                    np.max(region_of_interest["counts"]),
+                )
+                ax.legend()
+
+        plt.xlabel("tth")
+        plt.ylabel("Intensity (arb. units)")
+        if filepath:
+            plt.savefig(filepath)
+        plt.show()
+        plt.close()
+
 
 def convert_angcal_to_pydantic_json(
     ang_cal_json_path: str | Path, new_path: str | Path
@@ -876,48 +958,48 @@ def convert_angcal_to_new_pydantic_json(
     pydantic_model.save_to_json(new_path)
 
 
-# if __name__ == "__main__":
-#     PARENT_PATH = Path(__file__).parent.parent
+if __name__ == "__main__":
+    PARENT_PATH = Path(__file__).parent.parent
 
-#     print(PARENT_PATH)
+    print(PARENT_PATH)
 
-#     CONFIG_FILE = "/workspaces/XRPD-Toolbox/config/i11/mythen3_reduction_config.toml"
+    CONFIG_FILE = "/workspaces/XRPD-Toolbox/config/i11/mythen3_reduction_config.toml"
 
-#     DATA_FILE = "//host-home/projects/outputs/step_scan/1410289.nxs"
+    DATA_FILE = "//host-home/projects/outputs/step_scan/1410289.nxs"
 
-#     ANG_CAL = "/host-home/projects/outputs/mythen_calibration/processed/ang_cal_020426_cen_639.5_leastsq_[11, 17, 27]_new.json"  # noqa
+    ANG_CAL = "/host-home/projects/outputs/mythen_calibration/processed/ang_cal_020426_cen_639.5_leastsq_[11, 17, 27]_new.json"  # noqa
 
-#     settings = MythenSettings.load_from_toml(CONFIG_FILE)
-#     # settings.bad_modules = list(range(27))
-#     print("Loaded settings:", settings)
+    settings = MythenSettings.load_from_toml(CONFIG_FILE)
+    # settings.bad_modules = list(range(27))
+    print("Loaded settings:", settings)
 
-#     # print(DATA_FILE)
+    # print(DATA_FILE)
 
-#     # MythenDataLoader(DATA_FILE)
+    # MythenDataLoader(DATA_FILE)
 
-#     BAD_CHAN_FILE = "/workspaces/XRPD-Toolbox/config/i11/badchannels.txt"
+    BAD_CHAN_FILE = "/workspaces/XRPD-Toolbox/config/i11/badchannels.txt"
 
-#     angular_calibration = AngularCalibration.load_from_json(ANG_CAL)
-#     # angular_calibration.beamline_offset = -0.4979739
+    angular_calibration = AngularCalibration.load_from_json(ANG_CAL)
+    # angular_calibration.beamline_offset = -0.4979739
 
-#     settings.bad_channels_filepath = BAD_CHAN_FILE
+    settings.bad_channels_filepath = BAD_CHAN_FILE
 
-#     # DATA_FILE = "/workspaces/XRPD-Toolbox/examples/i11/step_scan/1414223.nxs"
-#     DATA_FILE = "/host-home/projects/outputs/angular_calibration/1410289.nxs"
+    # DATA_FILE = "/workspaces/XRPD-Toolbox/examples/i11/step_scan/1414223.nxs"
+    DATA_FILE = "/host-home/projects/outputs/angular_calibration/1410289.nxs"
 
-#     mythen3 = MythenDetector(
-#         filepath=DATA_FILE,
-#         settings=settings,
-#         angular_calibration=angular_calibration,
-#     )
+    mythen3 = MythenDetector(
+        filepath=DATA_FILE,
+        settings=settings,
+        angular_calibration=angular_calibration,
+    )
 
-#     tth, counts, error = mythen3.plot_diffraction(
-#         filepath="/host-home/projects/outputs/diff.png", calibrant="Si"
-#     )
+    tth, counts, error = mythen3.plot_diffraction(
+        filepath="/host-home/projects/outputs/diff.png", calibrant="Si"
+    )
 
-#     # mythen3.plot_diffraction_by_mod()
+    # mythen3.plot_diffraction_by_mod()
 
-#     quit()
+    quit()
 
 #     active_modules = list(range(28))
 

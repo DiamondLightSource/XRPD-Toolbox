@@ -183,3 +183,45 @@ def modules_to_pixels(modules: int | Iterable[int]):
         raise TypeError("Must be int or iterable of ints")
 
     return pixels
+
+
+def read_singular_angcal_files(angcal_filepath: str) -> tuple[dict, float]:
+    """
+
+    Reads a single of ang.off files and returns a dict with the
+    each modules anngular calibrations contains within a dict
+
+    each module dict contains "offset", "conv" and "centre"
+
+    eg. self.module_angular_cal[module]["offset"]
+
+    """
+
+    module_angular_cal = {}
+    beamline_offset = 0
+
+    with open(angcal_filepath) as f:
+        for line in f:
+            if "beamline_offset" in line:
+                elements = line.split()
+                beamline_offset = float(elements[1])
+
+            elif line := line.strip():
+                elements = line.split()
+                module_cal = {}
+
+                (
+                    module_in_file,
+                    module_cal["offset"],
+                    module_cal["conv"],
+                    module_cal["centre"],
+                ) = (
+                    int(elements[1]),
+                    float(elements[3]),
+                    float(elements[5]),
+                    float(elements[7]),
+                )
+
+                module_angular_cal[module_in_file] = module_cal
+
+    return module_angular_cal, beamline_offset
