@@ -126,3 +126,7 @@ def test_data_reduction_mode_validation():
 def test_legacy_toml():
     legacy_setting = MythenSettings.load(LEGANCY_CONIG)
     assert legacy_setting
+
+
+def test_mythen_angular_calculations_are_correct():
+    raise NotImplementedError()

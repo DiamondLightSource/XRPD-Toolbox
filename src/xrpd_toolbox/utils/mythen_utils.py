@@ -46,6 +46,38 @@ def channel_to_angle(
     return raw_tth
 
 
+def channel_to_angle_2d(
+    pixel_number: npt.NDArray[np.int_],
+    centre: float,
+    pixel_size: float,
+    radius: float,
+    module_angle: float,
+    tilt: float,
+    zero_offset: float,
+) -> np.ndarray:
+    """
+    Convert pixel number to two-theta using full 2D module geometry.
+
+    radius, module_angle define where the module's centre pixel sits
+    in real space (polar coords about the sample). tilt is the module's
+    own rotation away from perfectly tangential, so its effect on tth
+    grows non-linearly across the module (unlike a flat offset).
+    """
+    displacement_mm = (pixel_number - centre) * pixel_size
+
+    module_angle_rad = np.deg2rad(module_angle)
+    module_x = radius * np.cos(module_angle_rad)
+    module_y = radius * np.sin(module_angle_rad)
+
+    direction_rad = module_angle_rad + np.pi / 2 + np.deg2rad(tilt)
+
+    x = module_x + displacement_mm * np.cos(direction_rad)
+    y = module_y + displacement_mm * np.sin(direction_rad)
+
+    raw_tth = np.rad2deg(np.arctan2(y, x)) + zero_offset
+    return raw_tth
+
+
 def channel_to_angle_in_real_units(
     pixel_number: npt.NDArray[np.int_],
     centre: int | float,

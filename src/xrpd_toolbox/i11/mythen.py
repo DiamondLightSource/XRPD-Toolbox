@@ -24,7 +24,11 @@ from xrpd_toolbox.core import XRPDBaseModel, XYEData
 from xrpd_toolbox.fit_engine.profile_calculation import Structure
 from xrpd_toolbox.plotting import DataPlot
 from xrpd_toolbox.utils.messenger import Messenger
-from xrpd_toolbox.utils.mythen_utils import channel_to_angle, modules_to_pixels
+from xrpd_toolbox.utils.mythen_utils import (
+    channel_to_angle,
+    channel_to_angle_2d,
+    modules_to_pixels,
+)
 from xrpd_toolbox.utils.utils import (
     bin_and_propagate_errors,
     # get_calibrant_peaks,
@@ -48,14 +52,15 @@ MODULES_IN_DETECTOR = 28
 PIXELS_PER_MODULE = 1280
 PSD_RADIUS = 762  # mm
 MYTHEN_PIXEL_SIZE = 0.05  # mm
+CENTRE = (PIXELS_PER_MODULE - 1) / 2  # 639.5
 
-PIXEL_NUMBER = np.arange(PIXELS_PER_MODULE, dtype=np.int64)
+PIXEL_NUMBER = np.arange(PIXELS_PER_MODULE, dtype=int)
 
 
 class ModuleConversion(XRPDBaseModel):
     conv: float
     offset: float
-    centre: float
+    centre: float = CENTRE
 
     @property
     def module_sign(self) -> int:  # returns -1 or 1 depending on sign of conv
@@ -70,47 +75,128 @@ class ModuleConversion(XRPDBaseModel):
         """this calculated the module raw tth, ie the tth of the detector
         without taking the delta angle into account"""
 
+        return self.calculate_tth_for_pixel(
+            pixel_number=PIXEL_NUMBER, zero_offset=zero_offset, delta=0
+        )
+
+    def return_tth(self, zero_offset: float, delta: float | np.ndarray):
+
+        return self.calculate_tth_for_pixel(
+            pixel_number=PIXEL_NUMBER, zero_offset=zero_offset, delta=delta
+        )
+
+    def calculate_tth_for_pixel(
+        self, pixel_number: np.ndarray, zero_offset: float, delta: float | np.ndarray
+    ):
+
         raw_tth = channel_to_angle(
-            pixel_number=PIXEL_NUMBER,
+            pixel_number=pixel_number,
             centre=self.centre,
             conv=self.conv,
             module_offset=self.offset,
             zero_offset=zero_offset,
         )
-        return raw_tth
+
+        tth = raw_tth + delta
+
+        return tth
+
+
+class ModuleConversion2D(XRPDBaseModel):
+    radius: float  # mm, nominal module distance from sample
+    offset: float  # deg, angular position of module centre pixel
+    tilt: float = 0.0  # deg, module rotation away from tangential
+    centre: float = CENTRE  # fixed geometric constant, not fit
+    pixel_size: float = MYTHEN_PIXEL_SIZE
+
+    @classmethod
+    def from_psi_method(
+        cls,
+        conv: float,
+        offset: float,
+        tilt: float = 0.0,
+        centre: float = CENTRE,
+        pixel_size: float = MYTHEN_PIXEL_SIZE,
+    ) -> "ModuleConversion2D":
+        """
+        Build from legacy conv/offset calibration so existing fitted
+        values can seed the new geometry-based parametrisation.
+        conv = pixel_size / radius  =>  radius = pixel_size / conv
+        offset was the old additive angular term; treated here as the
+        starting module_angle (may need refinement once you have real
+        calibration data spread across each module).
+        """
+        radius = pixel_size / conv
+        return cls(
+            radius=radius,
+            offset=offset,
+            tilt=tilt,
+            centre=centre,
+            pixel_size=pixel_size,
+        )
+
+    def return_raw_tth(self, zero_offset: float) -> np.ndarray:
+        """this calculated the module raw tth, ie the tth of the detector
+        without taking the delta angle into account"""
+
+        return self.calculate_tth_for_pixel(
+            pixel_number=PIXEL_NUMBER, zero_offset=zero_offset, delta=0
+        )
+
+    def return_tth(self, zero_offset: float, delta: float | np.ndarray):
+
+        return self.calculate_tth_for_pixel(
+            pixel_number=PIXEL_NUMBER, zero_offset=zero_offset, delta=delta
+        )
+
+    def calculate_tth_for_pixel(
+        self, pixel_number: np.ndarray, zero_offset: float, delta: float | np.ndarray
+    ) -> np.ndarray:
+        return (
+            channel_to_angle_2d(
+                pixel_number=np.asarray(pixel_number),
+                centre=self.centre,
+                pixel_size=self.pixel_size,
+                radius=self.radius,
+                module_angle=self.offset,
+                tilt=self.tilt,
+                zero_offset=zero_offset,
+            )
+            + delta
+        )
 
 
 # TODO: Make module_n a dict?
 class AngularCalibration(XRPDBaseModel):
-    beamline_offset: float | int
-    module_0: ModuleConversion
-    module_1: ModuleConversion
-    module_2: ModuleConversion
-    module_3: ModuleConversion
-    module_4: ModuleConversion
-    module_5: ModuleConversion
-    module_6: ModuleConversion
-    module_7: ModuleConversion
-    module_8: ModuleConversion
-    module_9: ModuleConversion
-    module_10: ModuleConversion
-    module_11: ModuleConversion
-    module_12: ModuleConversion
-    module_13: ModuleConversion
-    module_14: ModuleConversion
-    module_15: ModuleConversion
-    module_16: ModuleConversion
-    module_17: ModuleConversion
-    module_18: ModuleConversion
-    module_19: ModuleConversion
-    module_20: ModuleConversion
-    module_21: ModuleConversion
-    module_22: ModuleConversion
-    module_23: ModuleConversion
-    module_24: ModuleConversion
-    module_25: ModuleConversion
-    module_26: ModuleConversion
-    module_27: ModuleConversion
+    beamline_offset: float = 0.0
+    module_0: ModuleConversion | ModuleConversion2D
+    module_1: ModuleConversion | ModuleConversion2D
+    module_2: ModuleConversion | ModuleConversion2D
+    module_3: ModuleConversion | ModuleConversion2D
+    module_4: ModuleConversion | ModuleConversion2D
+    module_5: ModuleConversion | ModuleConversion2D
+    module_6: ModuleConversion | ModuleConversion2D
+    module_7: ModuleConversion | ModuleConversion2D
+    module_8: ModuleConversion | ModuleConversion2D
+    module_9: ModuleConversion | ModuleConversion2D
+    module_10: ModuleConversion | ModuleConversion2D
+    module_11: ModuleConversion | ModuleConversion2D
+    module_12: ModuleConversion | ModuleConversion2D
+    module_13: ModuleConversion | ModuleConversion2D
+    module_14: ModuleConversion | ModuleConversion2D
+    module_15: ModuleConversion | ModuleConversion2D
+    module_16: ModuleConversion | ModuleConversion2D
+    module_17: ModuleConversion | ModuleConversion2D
+    module_18: ModuleConversion | ModuleConversion2D
+    module_19: ModuleConversion | ModuleConversion2D
+    module_20: ModuleConversion | ModuleConversion2D
+    module_21: ModuleConversion | ModuleConversion2D
+    module_22: ModuleConversion | ModuleConversion2D
+    module_23: ModuleConversion | ModuleConversion2D
+    module_24: ModuleConversion | ModuleConversion2D
+    module_25: ModuleConversion | ModuleConversion2D
+    module_26: ModuleConversion | ModuleConversion2D
+    module_27: ModuleConversion | ModuleConversion2D
 
 
 # TODO: "internal", "external", "best" in error calc have been added
@@ -456,9 +542,8 @@ class MythenModule:
         """Creates an array with the same shape as the data,
         with the tth values at the corresponding indexes"""
 
-        tth_2d = self.raw_tth_2d
-        tth_2d = tth_2d + self.positions[:, None]
-        return tth_2d
+        delta = self.positions[:, None]
+        return self.conversion.return_tth(self.beamline_offset, delta)
 
     @cached_property
     def mask_2d(self) -> np.ndarray:
@@ -583,19 +668,24 @@ class MythenDetector:
 
         self.contruct_modules()
 
-    def _make_mythen_module_kwargs(self, n_module, nth_active_module):
+    def _make_mythen_module(self, module_index: int, n_module: int) -> MythenModule:
         """MythenModule requires quite a lot of info,
-        so it's easier to make a contructor of it's kwargs"""
+        so it's easier to make a contructor
+        n_module is 0-N modules that are on
+        n_active is 0-27
+        """
 
-        return {
-            "data": self.mythen_data.module_data[n_module],
-            "conversion": self.calibration[f"module_{nth_active_module}"],
-            "beamline_offset": self.calibration.beamline_offset,
-            "module_id": nth_active_module,
-            "positions": self.mythen_data.positions,
-            "durations": self.mythen_data.durations,
-            "bad_channel_mask": self.bad_channels.masks[nth_active_module],
-        }
+        mythen_module = MythenModule(
+            data=self.mythen_data.module_data[module_index],
+            conversion=self.calibration[f"module_{n_module}"],
+            beamline_offset=self.calibration.beamline_offset,
+            module_id=n_module,
+            positions=self.mythen_data.positions,
+            durations=self.mythen_data.durations,
+            bad_channel_mask=self.bad_channels.masks[n_module],
+        )
+
+        return mythen_module
 
     def get_module(self, mod: int) -> MythenModule:
         return self.modules[mod]
@@ -606,12 +696,10 @@ class MythenDetector:
     def contruct_modules(self):
         self.modules = OrderedDict()
 
-        for n_module, nth_active_module in enumerate(self.settings.active_modules):
-            module = MythenModule(
-                **self._make_mythen_module_kwargs(n_module, nth_active_module)
-            )
+        for module_index, n_module in enumerate(self.settings.active_modules):
+            module = self._make_mythen_module(module_index, n_module)
 
-            self.modules[nth_active_module] = module
+            self.modules[n_module] = module
 
     def generate_xye(
         self, modules: Iterable[int], masked: bool = True
@@ -854,8 +942,8 @@ class MythenDetector:
     ):
         fig = plt.figure(figsize=(15, 10))
 
-        max_rows = 4
-        max_cols = 4
+        max_rows = int(np.sqrt(len(peaks)))
+        max_cols = int(np.sqrt(len(peaks)))
 
         gs = GridSpec(max_rows, max_cols, figure=fig)  # upper bound on plots
 
