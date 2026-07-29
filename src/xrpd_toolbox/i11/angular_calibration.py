@@ -151,13 +151,13 @@ def generate_filepaths(data_dir, nexus_file_numbers):
 class AngularCalibrateMythen:
     def __init__(
         self,
-        filepaths,
-        wavelength_in_ang,
-        module_centre=CENTRE,
+        filepaths: list[str],
+        wavelength_in_ang: float,
+        module_centre: float = CENTRE,
         active_modules=tuple(range(28)),  # noqa
         bad_modules: list[int] = [17],  # noqa
-        lower_delta=0,
-        upper_delta=90,
+        lower_delta: float = 0,
+        upper_delta: float = 90,
     ):
 
         self.DEFAULT_COUNTER = 0
