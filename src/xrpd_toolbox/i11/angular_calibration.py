@@ -14,7 +14,7 @@ from lmfit.minimizer import MinimizerResult
 from pyFAI.calibrant import get_calibrant
 from scipy.interpolate import interp1d
 
-from xrpd_toolbox.fit_engine.peaks import closest_indices
+from xrpd_toolbox.fit_engine.peaks import closest_indices, gaussian
 from xrpd_toolbox.i11.mythen import (
     CENTRE,
     MYTHEN_PIXEL_SIZE,
@@ -111,14 +111,6 @@ def index_of_closest(arr, value):
     arr = np.asarray(arr)
     idx = np.abs(arr - value).argmin()
     return idx
-
-
-def gaussian(x: np.ndarray, cen: float, amp: float, fwhm: float):
-    # "1-d gaussian: gaussian(x, amp, cen, fwhm)"
-
-    return (amp / (np.sqrt(2 * np.pi) * fwhm)) * np.exp(
-        -((x - cen) ** 2) / (2 * fwhm**2)
-    )
 
 
 def multi_gaussian(x: np.ndarray, peaks, background=0, phase_scale=1, wdt: int = 4):
