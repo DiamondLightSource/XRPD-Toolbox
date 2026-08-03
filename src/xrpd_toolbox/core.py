@@ -572,6 +572,10 @@ class XRPDBaseModel(BaseModel):
         else:
             raise ValueError(f"{name} not in {self}")
 
+    def get(self, key):
+
+        return self.__getitem__(key)
+
     def __setitem__(self, name, value):
         setattr(self, name, value)
 

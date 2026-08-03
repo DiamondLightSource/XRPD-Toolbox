@@ -1,7 +1,10 @@
-import json
+import math
 import os
 import pickle
+import time
+import warnings
 from collections.abc import Collection, Sequence
+from datetime import datetime
 from typing import Literal
 
 import matplotlib.pyplot as plt
@@ -11,16 +14,18 @@ import peakutils
 from h5py import File as h5pyFile
 from lmfit import Parameters, minimize, report_fit
 from lmfit.minimizer import MinimizerResult
-from pyFAI.calibrant import get_calibrant
 from scipy.interpolate import interp1d
 
 from xrpd_toolbox.fit_engine.peaks import closest_indices, gaussian
 from xrpd_toolbox.i11.mythen import (
     CENTRE,
+    DEFAULT_BAD_CHANS,
     MYTHEN_PIXEL_SIZE,
     PIXELS_PER_MODULE,
     PSD_RADIUS,
     AngularCalibration,
+    AngularCalibration2D,
+    BadChannels,
     ModuleConversion,
     ModuleConversion2D,
     MythenDetector,
@@ -34,12 +39,14 @@ from xrpd_toolbox.utils.mythen_utils import (
     read_singular_angcal_files,
 )
 from xrpd_toolbox.utils.utils import (
+    get_calibrant_peaks,
+    # rebin_together,
     h5_to_array,
-    load_int_array_from_file,
-    rebin_together,
 )
 
-PEAK_MASK_LITERAL = Literal["select_peaks", "below", "below2", "max", "between"]
+PEAK_MASK_LITERAL = Literal[
+    "select_peaks", "below", "below2", "max", "between", "always_seen"
+]
 
 
 def module_distance(module: int):
@@ -151,7 +158,7 @@ def generate_filepaths(data_dir, nexus_file_numbers):
 class AngularCalibrateMythen:
     def __init__(
         self,
-        filepaths: list[str],
+        filepath: str,
         wavelength_in_ang: float,
         module_centre: float = CENTRE,
         active_modules=tuple(range(28)),  # noqa
@@ -165,7 +172,16 @@ class AngularCalibrateMythen:
         self.p = MYTHEN_PIXEL_SIZE  # pixel size in mm
         self.psd_radius = PSD_RADIUS
 
-        self.filepaths = filepaths
+        self.filepath = filepath
+        self.filename = os.path.basename(filepath)
+        self.filenumber = self.filename.replace(".nxs", "")
+
+        self.pickled_peaks_filepath = (
+            f"/host-home/projects/outputs/{self.filenumber}_fitted_peaks.obj"
+        )
+
+        self.split_peaks_filepath = f"/host-home/projects/outputs/mythen_calibration/processed/{self.filenumber}_modules.h5"  # noqa
+
         self.wavelength_in_ang = wavelength_in_ang
 
         self.lower_delta = lower_delta
@@ -177,9 +193,9 @@ class AngularCalibrateMythen:
             f for f in self.active_modules if f not in self.bad_modules
         ]
 
-        calibrant = get_calibrant("Si")
-        calibrant.wavelength = self.wavelength_in_ang / 1e10
-        self.observed_reflections_in_tth = calibrant.get_peaks("2th_deg")
+        self.observed_reflections_in_tth = get_calibrant_peaks(
+            "Si", self.wavelength_in_ang
+        )
 
         print(self.observed_reflections_in_tth)
 
@@ -206,40 +222,33 @@ class AngularCalibrateMythen:
             ang_cal
         )  # ["offset"], module_cal["conv"], module_cal["centre"]
 
-        self.bad_channels = load_int_array_from_file(
-            "/workspaces/XRPD-Toolbox/config/i11/badchannels.txt"
-        )
+        bad_chan_obj = BadChannels(filepath=DEFAULT_BAD_CHANS, n_edge_bad_channels=10)
+
+        # bad_chan_obj.add_bad_channel_to_module(4, np.arange(0, 256, 1, dtype=int))
+        # bad_chan_obj.add_bad_channel_to_module(11, np.arange(0, 256, 1, dtype=int))
+
+        self.bad_channels = bad_chan_obj.bad_channels
 
         ########################################
 
     def get_selected_peaks(
         self,
         use_pickle: bool = True,
-        mask_type: PEAK_MASK_LITERAL = "below",
+        mask_type: PEAK_MASK_LITERAL | None = "below",
         plot_fit: bool = True,
     ):
 
-        self.use_pickle = use_pickle
-
-        fitted_peaks_for_modules_file = (
-            f"/host-home/projects/outputs/{si_nexus_file_numbers[0]}_fitted_peaks.obj"
-        )
-
         if not use_pickle:
-            new_split_si_filepaths = [
-                f"/host-home/projects/outputs/mythen_calibration/processed/{f}_modules.h5"
-                for f in si_nexus_file_numbers
-            ]
-
-            self.module_dataset_filepath = new_split_si_filepaths[0]
-
-            if not os.path.exists(self.module_dataset_filepath):
-                new_split_si_filepaths = self.split_into_modules(
-                    self.filepaths, bad_channels=list(self.bad_channels)
+            if not os.path.exists(self.split_peaks_filepath):
+                module_datasets = self.split_into_modules(  # noqa
+                    filepath=self.filepath,
+                    out_filepath=self.split_peaks_filepath,
+                    bad_channels=list(self.bad_channels),
                 )  # (delta, n_modules, PIXELS_PER_MODULE)
 
-            delta_points = self.get_delta_points(self.filepaths[0])
-            fitted_peaks_for_modules = self.fit_peaks_across_delta(
+            delta_points = h5_to_array(self.filepath, "/entry/mythen_nx/delta")
+
+            all_fitted_peaks_for_modules = self.fit_peaks_across_delta(
                 delta_points=delta_points,
                 module_angular_cal=self.module_angular_cal,
                 modules=self.active_modules,
@@ -247,32 +256,66 @@ class AngularCalibrateMythen:
                 beamline_offset=self.beamline_offset,
             )
 
-            with open(fitted_peaks_for_modules_file, "wb") as fp:
-                pickle.dump(fitted_peaks_for_modules, fp)
+            with open(self.pickled_peaks_filepath, "wb") as fp:
+                pickle.dump(all_fitted_peaks_for_modules, fp)
 
         else:
-            with open(fitted_peaks_for_modules_file, "rb") as pickle_file:
-                fitted_peaks_for_modules = pickle.load(pickle_file)
+            with open(self.pickled_peaks_filepath, "rb") as pickle_file:
+                all_fitted_peaks_for_modules = pickle.load(pickle_file)
 
-        fitted_peaks_for_modules = self.remove_bad_modules(fitted_peaks_for_modules)
+        self.all_fitted_peaks_for_modules_without_bad_modules = self.remove_bad_modules(
+            all_fitted_peaks_for_modules
+        )
 
         if plot_fit:
-            self.plot_fit_stats(fitted_peaks_for_modules)
+            self.plot_fit_stats(self.all_fitted_peaks_for_modules_without_bad_modules)
 
         self.fitted_peaks_for_modules = self.select_peaks(
-            fitted_peaks_for_modules, mask_type=mask_type
+            self.all_fitted_peaks_for_modules_without_bad_modules, mask_type=mask_type
         )
+
+        # for module in self.fitted_peaks_for_modules.keys():
+
+        # print(self.fitted_peaks_for_modules)
 
     def add_bad_modules_to_results(self, results_dict: dict):
 
+        convs = calc_intial_module_conv(MYTHEN_PIXEL_SIZE / PSD_RADIUS)
+        offsets = calc_starting_module_offset()
+
         for bad_mod in self.bad_modules:
-            results_dict[f"conv_{bad_mod}"] = self.module_angular_cal[bad_mod]["conv"]
-            results_dict[f"offset_{bad_mod}"] = self.module_angular_cal[bad_mod][
-                "offset"
-            ]
-            results_dict[f"centre_{bad_mod}"] = self.module_centre
+            pixel_direction = int(math.copysign(1, convs[bad_mod]))
+
+            results_dict[f"module_{bad_mod}_offset"] = offsets[bad_mod]
+            results_dict[f"module_{bad_mod}_centre"] = self.module_centre
+
+            if self.module_conversion is ModuleConversion:
+                results_dict[f"module_{bad_mod}_conv"] = convs[bad_mod]
+            elif self.module_conversion is ModuleConversion2D:
+                results_dict[f"module_{bad_mod}_radius"] = PSD_RADIUS
+                results_dict[f"module_{bad_mod}_pixel_direction"] = pixel_direction
+                results_dict[f"module_{bad_mod}_tilt"] = 0
+            else:
+                raise Exception("add_bad_modules_to_results needs ModuleConversion/2D")
 
         return results_dict
+
+    def create_and_save_pydantic_results(
+        self,
+        module_conversion: type[ModuleConversion | ModuleConversion2D],
+        angcal_filepath: str,
+    ):
+
+        pydantic_dict = self.results_dict_to_pydantic(self.results_dict)
+
+        if module_conversion is ModuleConversion:
+            angular_calibration = AngularCalibration.model_validate(pydantic_dict)
+        else:
+            angular_calibration = AngularCalibration2D.model_validate(pydantic_dict)
+
+        angular_calibration.save_to_json(angcal_filepath)
+
+        return angular_calibration
 
     def fit(
         self,
@@ -282,18 +325,28 @@ class AngularCalibrateMythen:
         ] = ModuleConversion2D,
         starting_params="guess",
         plot_fit: bool = True,
+        show_plot: bool = False,
+        output_dir: str = "/host-home/projects/outputs/mythen_calibration/processed",
+        max_nfev: int | None = None,
     ):
 
         self.module_conversion = module_conversion
 
-        self.plot_iter = 0
+        self.iter = 0
 
         self.resid_per_module = {}
         for module in self.good_modules:
             self.resid_per_module[module] = []
 
         # if starting_params == "guess":
-        params = self.create_starting_params(self.beamline_offset)
+        if module_conversion is ModuleConversion:
+            params = self.create_starting_params(beamline_offset=self.beamline_offset)
+        elif module_conversion is ModuleConversion2D:
+            params = self.create_2d_starting_params(
+                beamline_offset=self.beamline_offset
+            )
+        else:
+            raise Exception("Don't have a param creator for this module conversion")
         # else:
         #     params = self.create_starting_params_from_original(
         #         self.module_angular_cal, self.beamline_offset
@@ -305,6 +358,7 @@ class AngularCalibrateMythen:
             args=(self.good_modules, self.fitted_peaks_for_modules),
             nan_policy="omit",
             method=fit_method,
+            max_nfev=max_nfev,
         )
 
         results: MinimizerResult
@@ -313,26 +367,36 @@ class AngularCalibrateMythen:
 
         self.residual = results.residual
 
-        angcal_filepath = f"/host-home/projects/outputs/mythen_calibration/processed/ang_cal_020426_cen_{self.module_centre}_{fit_method}_{self.bad_modules}.off"  # noqa
+        year = datetime.now().year
+        month = datetime.now().month
+
+        angcal_filepath = f"{output_dir}/ang_cal_{month}{year}_cen_{self.module_centre}_{fit_method}_{self.bad_modules}.off"  # noqa
 
         self.results_dict: dict = results.params.valuesdict()  # type: ignore
         print(self.results_dict)
 
         self.results_dict = self.add_bad_modules_to_results(self.results_dict)
 
-        self.save_results(
-            results_dict=self.results_dict,
-            filepath=angcal_filepath,
-            modules=self.active_modules,
-            bad_modules=self.bad_modules,
-            original_ang_cal=self.module_angular_cal,
-        )
+        if self.module_conversion is ModuleConversion:
+            self.save_results(
+                results_dict=self.results_dict,
+                filepath=angcal_filepath,
+                modules=self.active_modules,
+                bad_modules=self.bad_modules,
+                original_ang_cal=self.module_angular_cal,
+            )
+        else:
+            warnings.warn(
+                "\nModuleConversion2D not backwards compatible, so can't make .off\n",
+                stacklevel=1,
+            )
 
         # print(AngularCalibration.model_fields)
 
-        pydantic_dict = self.results_dict_to_pydantic(self.results_dict)
-        angular_calibration = AngularCalibration.model_validate(pydantic_dict)
-        angular_calibration.save_to_json(angcal_filepath.replace(".off", ".json"))
+        angular_calibration = self.create_and_save_pydantic_results(
+            module_conversion=self.module_conversion,
+            angcal_filepath=angcal_filepath.replace(".off", ".json"),
+        )
 
         # check_files = "/dls/i11/data/2025/cm40625-5/1399181.nxs"
         # check_files = [
@@ -343,84 +407,86 @@ class AngularCalibrateMythen:
         settings = MythenSettings(bad_modules=self.bad_modules)
 
         # for data_file in check_files:
-        basename = os.path.basename(self.filepaths[0])
 
         analysis = MythenDetector(
-            filepath=self.filepaths[0],
+            filepath=self.filepath,
             settings=settings,
             angular_calibration=angular_calibration,
+            frames=slice(0, None, 2),
         )
 
         if plot_fit:
-            for peak in self.observed_reflections_in_tth[[3, 5, 11]]:
+            plotting_peaks = self.observed_reflections_in_tth[
+                self.observed_reflections_in_tth < 85
+            ]
+
+            print("Saving plots")
+            for peak in plotting_peaks:
+                print(f"Saving {peak}")
                 analysis.plot_by_region_of_interest(
                     [peak],
                     tol=0.04,
-                    filepath=f"/host-home/projects/outputs/roi_{basename}.png",
+                    filepath=f"/host-home/projects/outputs/roi_{self.filename}_{peak}.png",
+                    show=show_plot,
                 )
+
+            analysis.plot_by_region_of_interest(
+                plotting_peaks,
+                tol=0.04,
+                filepath=f"/host-home/projects/outputs/roi_{self.filename}.png",
+                show=show_plot,
+            )
 
             analysis.plot_diffraction_by_mod()
 
     def split_into_modules(
         self,
-        filespaths: list[str],
+        filepath: str,
+        out_filepath: str,
         modules: Collection[int] = tuple(range(28)),
         bad_channels: Sequence[int] = (),
     ):
         n_modules = len(modules)
 
-        out_filepaths = []
+        delta = h5_to_array(filepath, "/entry/mythen_nx/delta")
 
-        for filepath in filespaths:
-            delta = h5_to_array(filepath, "/entry/mythen_nx/delta")
+        n_delta_points = delta.shape[0]
 
-            filename = os.path.basename(filepath)
-            filenumber = filename.replace(".nxs", "")
+        module_datasets = np.zeros((n_delta_points, n_modules, self.STRIPS_PER_MODULE))
 
-            n_delta_points = delta.shape[0]
+        for i in range(delta.shape[0]):
+            print(f"File: {filepath}, Frame: {i}, Delta: {delta[i]}")
 
-            module_array = np.zeros((n_delta_points, n_modules, self.STRIPS_PER_MODULE))
+            data = h5_to_array(filepath, "/entry/mythen_nx/data")[
+                i, :, self.DEFAULT_COUNTER
+            ]
 
-            for i in range(delta.shape[0]):
-                print(f"File: {filepath}, Frame: {i}, Delta: {delta[i]}")
+            data[bad_channels] = 0
 
-                data = h5_to_array(filepath, "/entry/mythen_nx/data")[
-                    i, :, self.DEFAULT_COUNTER
-                ]
+            split_module_data = np.split(data, n_modules)
 
-                data[bad_channels] = 0
+            for n_mod in modules:
+                module_data = split_module_data[n_mod]
 
-                split_module_data = np.split(data, n_modules)
+                # if n_mod > 13:
+                #     module_data = np.flip(module_data)
 
-                for n_mod in modules:
-                    module_data = split_module_data[n_mod]
+                module_datasets[i, n_mod, :] = module_data
 
-                    # if n_mod > 13:
-                    #     module_data = np.flip(module_data)
+        with h5pyFile(out_filepath, "w", libver="latest") as h5f:
+            h5f["data1"] = module_datasets
 
-                    module_array[i, n_mod, :] = module_data
-
-            out_filepath = os.path.join(
-                "/host-home/projects/outputs",
-                filenumber + "_modules.h5",
-            )
-            out_filepaths.append(out_filepath)
-
-            with h5pyFile(out_filepath, "w", libver="latest") as h5f:
-                h5f["data1"] = module_array
-
-            return out_filepaths
+        return module_datasets
 
     def extract_module_dataset(self, module_to_analyse: int, delta_points):
         module_datasets = []
 
-        for n_delta, _ in enumerate(delta_points):
-            nxs_data = h5_to_array(
-                self.module_dataset_filepath, "data1"
-            )  # (delta, n_modules, PIXELS_PER_MODULE)
+        with h5pyFile(self.split_peaks_filepath, "r") as file:
+            nxs_data = file["data1"]  # (delta, n_modules, PIXELS_PER_MODULE)
 
-            module_data = nxs_data[n_delta, module_to_analyse, :]
-            module_datasets.append(module_data)
+            for n_delta, _ in enumerate(delta_points):
+                module_data = nxs_data[n_delta, module_to_analyse, :]  # type: ignore
+                module_datasets.append(module_data)
 
         module_datasets = np.array(module_datasets)
 
@@ -495,7 +561,7 @@ class AngularCalibrateMythen:
             for n, (delta, dataset) in enumerate(
                 zip(delta_points, module_dataset, strict=True)
             ):
-                print(module_to_analyse, n, delta)
+                print("fit_peaks_across_delta", f"{module_to_analyse=}", n, f"{delta=}")
 
                 dataset[0:trim] = np.nan
                 dataset[len(dataset) - trim : :] = np.nan
@@ -601,12 +667,7 @@ class AngularCalibrateMythen:
                         print(e)
                         continue
 
-                    # if (
-                    #     (n % 1 == 0)
-                    #     and (n > 29)
-                    #     and (n < 41)
-                    #     and (module_to_analyse in [5])
-                    # ):
+                    # if np.min(tth_calculated_peak_centres) < 25:
                     #     plt.plot(real_tth, non_nan_dataset)
                     #     plt.scatter(
                     #         tth_peaks_centres_in_data,
@@ -684,6 +745,89 @@ class AngularCalibrateMythen:
 
         return fitted_peaks_for_modules
 
+    def ring_compare(self):
+        pass
+
+    #     for bad_mod in self.bad_modules:
+    #         params[f"conv_{bad_mod}"] = self.module_angular_cal[bad_mod]["conv"]
+    #         params[f"offset_{bad_mod}"] = self.module_angular_cal[bad_mod]["offset"]
+    #         params[f"centre_{bad_mod}"] = self.module_centre
+
+    #     pydantic_dict = self.results_dict_to_pydantic(params)
+    #     angular_calibration = AngularCalibration(**pydantic_dict)
+
+    #     config_file = "/host-home/projects/outputs/mythen_calibration/mythen3_reduction_config.toml"  # noqa
+    #     settings1 = MythenSettings.load_from_toml(config_file)
+    #     settings2 = MythenSettings.load_from_toml(config_file)
+
+    #     bad_chan_file = "/workspaces/XRPD-Toolbox/config/i11/badchannels.txt"
+
+    #     data_file = "/host-home/projects/outputs/angular_calibration/1410289.nxs"
+    #     settings1.bad_channels_filepath = bad_chan_file
+    #     settings2.bad_channels_filepath = bad_chan_file
+
+    #     settings1.bad_modules = [
+    #         11,
+    #         14,
+    #         15,
+    #         16,
+    #         17,
+    #         18,
+    #         19,
+    #         20,
+    #         21,
+    #         22,
+    #         23,
+    #         24,
+    #         25,
+    #         26,
+    #         27,
+    #     ]
+    #     settings2.bad_modules = [
+    #         0,
+    #         1,
+    #         2,
+    #         3,
+    #         4,
+    #         5,
+    #         6,
+    #         7,
+    #         8,
+    #         9,
+    #         10,
+    #         11,
+    #         12,
+    #         13,
+    #         17,
+    #         27,
+    #     ]  # type: ignore
+
+    #     mythen3_ring_1 = MythenDetector(
+    #         filepath=data_file,
+    #         settings=settings1,
+    #         angular_calibration=angular_calibration,
+    #     )
+
+    #     tth1, count1, error1 = mythen3_ring_1.generate_binned_xye(normalise=False)
+
+    #     mythen3_ring_2 = MythenDetector(
+    #         filepath=data_file,
+    #         settings=settings2,
+    #         angular_calibration=angular_calibration,
+    #     )
+
+    #     tth2, count2, error2 = mythen3_ring_2.generate_binned_xye(normalise=False)
+
+    #     x_common, y1_interp, y2_interp = rebin_together(tth1, count1, tth2, count2)
+
+    #     ring_compare = np.abs(y1_interp - y2_interp)
+    #     ring_compare_resid = np.sum(ring_compare) / (1e9)
+
+    #     resid_for_all_modules = resid_for_all_modules + ring_compare_resid
+
+    # print(np.sum(resid_for_all_modules), np.sum(ring_compare))
+    # self.plot_iter = self.plot_iter + 1
+
     def return_residual_for_modules(
         self,
         params: Parameters,
@@ -699,31 +843,57 @@ class AngularCalibrateMythen:
         for _, (module_to_analyse) in enumerate(modules):
             module_dataframe = fitted_peaks_for_modules[module_to_analyse]
 
-            centre = params_dict[f"module_{module_to_analyse}_centre"]
-            beamline_offset = params_dict["beamline_offset"]
-            conv = params_dict[f"module_{module_to_analyse}_conv"]
-            offset = params_dict[f"module_{module_to_analyse}_offset"]
+            centre = params_dict.get(f"module_{module_to_analyse}_centre")
+            beamline_offset = params_dict.get("beamline_offset")
+            conv = params_dict.get(f"module_{module_to_analyse}_conv")
+            offset = params_dict.get(f"module_{module_to_analyse}_offset")
+
+            radius = params_dict.get(f"module_{module_to_analyse}_radius")
+            tilt = params_dict.get(f"module_{module_to_analyse}_tilt")
+            pixel_direction = params_dict.get(
+                f"module_{module_to_analyse}_pixel_direction"
+            )
+            rotation_centre_x = params_dict.get("rotation_centre_x")
+            rotation_centre_y = params_dict.get("rotation_centre_y")
+
             delta = module_dataframe["delta"].to_numpy()
-            # delta_offset = params_dict[f"delta_offset_{module_to_analyse}"]
             module_pixel = module_dataframe["pixel"].to_numpy()
+
+            assert beamline_offset is not None
 
             self.module_conversion: type[ModuleConversion | ModuleConversion2D]
 
             if self.module_conversion is ModuleConversion:
+                assert conv is not None
+                assert offset is not None
+                assert centre is not None
+
                 real_tth = self.module_conversion(
                     conv=conv,
-                    offset=offset,
+                    module_angle=offset,
                     centre=centre,
                 ).calculate_tth_for_pixel(
                     pixel_number=module_pixel, zero_offset=beamline_offset, delta=delta
                 )
             elif self.module_conversion is ModuleConversion2D:
+                assert radius is not None
+                assert offset is not None
+                assert tilt is not None
+                assert pixel_direction is not None
+                assert rotation_centre_x is not None
+                assert rotation_centre_y is not None
+
                 real_tth = self.module_conversion(
                     radius=radius,
-                    offset=offset,
+                    module_angle=offset,
                     tilt=tilt,
+                    pixel_direction=pixel_direction,
                 ).calculate_tth_for_pixel(
-                    pixel_number=module_pixel, zero_offset=beamline_offset, delta=delta
+                    pixel_number=module_pixel,
+                    zero_offset=beamline_offset,
+                    delta=delta,
+                    rotation_centre_x=rotation_centre_x,
+                    rotation_centre_y=rotation_centre_y,
                 )
             else:
                 raise Exception("Must be ModuleConversion")
@@ -747,7 +917,7 @@ class AngularCalibrateMythen:
             # print(module_to_analyse)
             self.resid_per_module[module_to_analyse].append(resid_for_module_iter)
 
-            if plot and (self.plot_iter % 200 == 0):
+            if plot and (self.iter % 200 == 0):
                 print(module_to_analyse)
                 plt.scatter(real_tth, [1] * len(real_tth), label="det")
                 plt.scatter(
@@ -759,94 +929,21 @@ class AngularCalibrateMythen:
                 plt.show()
 
         if ring_compare:
-            for bad_mod in self.bad_modules:
-                params[f"conv_{bad_mod}"] = self.module_angular_cal[bad_mod]["conv"]
-                params[f"offset_{bad_mod}"] = self.module_angular_cal[bad_mod]["offset"]
-                params[f"centre_{bad_mod}"] = self.module_centre
+            self.ring_compare()
 
-            pydantic_dict = self.results_dict_to_pydantic(params)
-            angular_calibration = AngularCalibration(**pydantic_dict)
+        print(self.iter, np.sum(resid_for_all_modules))
 
-            config_file = "/host-home/projects/outputs/mythen_calibration/mythen3_reduction_config.toml"  # noqa
-            settings1 = MythenSettings.load_from_toml(config_file)
-            settings2 = MythenSettings.load_from_toml(config_file)
-
-            bad_chan_file = "/workspaces/XRPD-Toolbox/config/i11/badchannels.txt"
-
-            data_file = "/host-home/projects/outputs/angular_calibration/1410289.nxs"
-            settings1.bad_channels_filepath = bad_chan_file
-            settings2.bad_channels_filepath = bad_chan_file
-
-            settings1.bad_modules = [
-                11,
-                14,
-                15,
-                16,
-                17,
-                18,
-                19,
-                20,
-                21,
-                22,
-                23,
-                24,
-                25,
-                26,
-                27,
-            ]
-            settings2.bad_modules = [
-                0,
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-                8,
-                9,
-                10,
-                11,
-                12,
-                13,
-                17,
-                27,
-            ]  # type: ignore
-
-            mythen3_ring_1 = MythenDetector(
-                filepath=data_file,
-                settings=settings1,
-                angular_calibration=angular_calibration,
-            )
-
-            tth1, count1, error1 = mythen3_ring_1.generate_binned_xye(normalise=False)
-
-            mythen3_ring_2 = MythenDetector(
-                filepath=data_file,
-                settings=settings2,
-                angular_calibration=angular_calibration,
-            )
-
-            tth2, count2, error2 = mythen3_ring_2.generate_binned_xye(normalise=False)
-
-            x_common, y1_interp, y2_interp = rebin_together(tth1, count1, tth2, count2)
-
-            ring_compare = np.abs(y1_interp - y2_interp)
-            ring_compare_resid = np.sum(ring_compare) / (1e9)
-
-            resid_for_all_modules = resid_for_all_modules + ring_compare_resid
-
-        print(np.sum(resid_for_all_modules), np.sum(ring_compare))
-        self.plot_iter = self.plot_iter + 1
+        self.iter = self.iter + 1
 
         return resid_for_all_modules
 
-    def get_delta_points(self, filepath):
-
-        return h5_to_array(filepath, "/entry/mythen_nx/delta")
-
     def save_results(
-        self, results_dict, filepath, modules, bad_modules, original_ang_cal, p=0.05
+        self,
+        results_dict: dict,
+        filepath: str,
+        modules: list[int],
+        bad_modules: list[int],
+        original_ang_cal: dict,
     ):
         for key in results_dict.keys():
             if "conv" in key:
@@ -866,9 +963,9 @@ class AngularCalibrateMythen:
                     )
 
                 else:
-                    off = results_dict[f"offset_{module}"]
-                    conv = results_dict[f"conv_{module}"]
-                    center = results_dict[f"centre_{module}"]
+                    off = results_dict[f"module_{module}_offset"]
+                    conv = results_dict[f"module_{module}_conv"]
+                    center = results_dict[f"module_{module}_centre"]
 
                     f.write(
                         f"module {module} offset {off} conv {conv} center {center} \n"
@@ -877,9 +974,6 @@ class AngularCalibrateMythen:
             beamline_offset = results_dict["beamline_offset"]
 
             f.write(f"beamline_offset {beamline_offset}")
-
-        with open(filepath.replace(".off", ".json"), "w") as fp:
-            json.dump(results_dict, fp, indent=4)
 
         print(f"Saved to: {filepath}")
 
@@ -890,20 +984,59 @@ class AngularCalibrateMythen:
             plt.plot(np.log10(mod_resids))
             plt.show()
 
-    # def create_2d_starting_params(self):
-
-    #     convs = calc_intial_module_conv(0.05 / 762)
-    #     offsets = calc_starting_module_offset()
-
-    #     params = Parameters()
-
-    def create_starting_params(
-        self, zero: float = -0.5, conv_tol: float = 0.2, offset_tol: float = 4
+    def create_2d_starting_params(
+        self,
+        beamline_offset: float = -0.5,
+        conv_tol: float = 0.2,
+        offset_tol: float = 4,
     ) -> Parameters:
         # conv_tol # fractional percent 0.1 = 10%
         # offset_tol = 4  # in degrees
 
-        convs = calc_intial_module_conv(0.05 / 762)
+        convs = calc_intial_module_conv(MYTHEN_PIXEL_SIZE / PSD_RADIUS)
+        offsets = calc_starting_module_offset()
+
+        params = Parameters()
+
+        for mod in self.good_modules:
+            init_conv = convs[mod]
+            init_offset = offsets[mod]
+
+            sign = int(math.copysign(1, init_conv))
+
+            conv_lower = init_conv - ((abs(init_conv)) * conv_tol)
+            conv_upper = init_conv + ((abs(init_conv)) * conv_tol)
+
+            init_lower = init_offset - offset_tol
+            init_upper = init_offset + offset_tol
+
+            print(mod, init_offset, init_conv, conv_lower, conv_upper)
+
+            # add with tuples: (NAME VALUE VARY MIN  MAX  EXPR  BRUTE_STEP)
+            # fmt: off
+            params.add(f"module_{mod}_radius", value=PSD_RADIUS, vary=True, min=-PSD_RADIUS-1, max=PSD_RADIUS+1) # noqa
+            params.add(f"module_{mod}_offset", value=init_offset, vary=True, min=init_lower, max=init_upper) # noqa
+            params.add(f"module_{mod}_tilt", value=0, vary=True, min=-2, max=2) # noqa
+            params.add(f"module_{mod}_centre", value=self.module_centre, vary=False) # noqa
+            params.add(f"module_{mod}_pixel_direction", value=sign, vary=False) # noqa
+
+        params.add("beamline_offset", value=0, vary=True, min=-2, max=2)
+        params.add("rotation_centre_x", value=0, vary=True, min=-2, max=2)
+        params.add("rotation_centre_y", value=0, vary=True, min=-2, max=2)
+        # raise NotImplementedError("ModuleConversion2D")
+
+        return params
+
+    def create_starting_params(
+        self,
+        beamline_offset: float = -0.5,
+        conv_tol: float = 0.2,
+        offset_tol: float = 2,
+    ) -> Parameters:
+        # conv_tol # fractional percent 0.1 = 10%
+        # offset_tol = 4  # in degrees
+
+        convs = calc_intial_module_conv(MYTHEN_PIXEL_SIZE / PSD_RADIUS)
         offsets = calc_starting_module_offset()
 
         params = Parameters()
@@ -915,32 +1048,20 @@ class AngularCalibrateMythen:
             conv_lower = init_conv - ((abs(init_conv)) * conv_tol)
             conv_upper = init_conv + ((abs(init_conv)) * conv_tol)
 
+            init_lower = init_offset - offset_tol
+            init_upper = init_offset + offset_tol
+
             print(mod, init_offset, init_conv, conv_lower, conv_upper)
 
-            params.add(
-                f"module_{mod}_conv",
-                vary=True,
-                value=init_conv,
-                min=conv_lower,
-                max=conv_upper,
-            )
-            params.add(
-                f"module_{mod}_offset",
-                vary=True,
-                value=init_offset,
-                min=init_offset - offset_tol,
-                max=init_offset + offset_tol,
+            # add with tuples: (NAME VALUE VARY MIN  MAX  EXPR  BRUTE_STEP)
+            # fmt: off
+            params.add_many(
+                (f"module_{mod}_conv", init_conv, True, conv_lower, conv_upper, None, None), # noqa
+                (f"module_{mod}_offset", init_offset, True, init_lower, init_upper, None, None), # noqa
+                (f"module_{mod}_centre", self.module_centre, False, None, None, None, None),  # noqa
             )
 
-            params.add(
-                f"module_{mod}_centre",
-                value=self.module_centre,
-                vary=False,
-                min=self.module_centre - 2,
-                max=self.module_centre + 2,
-            )  # maybe 640 or 639.5?
-
-        params.add("beamline_offset", value=zero, vary=True, min=-2, max=2)
+        params.add("beamline_offset", value=beamline_offset, vary=True, min=-2, max=2)
 
         return params
 
@@ -953,7 +1074,7 @@ class AngularCalibrateMythen:
 
         for module in fitted_peaks_for_modules.keys():
             module_data = fitted_peaks_for_modules[module]
-            plt.title(str(module))
+            plt.title(f"Module: {module}")
             # plt.scatter(module_data["delta"], module_data["pixel"])
 
             mask = np.isclose(
@@ -969,7 +1090,11 @@ class AngularCalibrateMythen:
 
             for peak in np.unique(module_data["calc_peak_tth"]):
                 peak_in_module = module_data[module_data["calc_peak_tth"] == peak]
-                plt.scatter(peak_in_module["delta"], peak_in_module["pixel"])
+                plt.scatter(
+                    peak_in_module["delta"],
+                    peak_in_module["pixel"],
+                    label=str(np.round(peak, 2)),
+                )
 
                 m, b = np.polyfit(
                     peak_in_module["delta"].to_numpy(),
@@ -985,6 +1110,9 @@ class AngularCalibrateMythen:
                     color="red",
                 )
             peak_fits[str(module)] = peak_data_gradient
+            plt.legend()
+            plt.xlabel("Rotation of detector (delta)")
+            plt.ylabel("Pixel of module")
             plt.savefig(f"/host-home/projects/outputs/peak_fits_{module}.png")
             plt.close()
 
@@ -1024,16 +1152,45 @@ class AngularCalibrateMythen:
 
         return fitted_peaks_for_modules
 
+    def find_which_peaks_are_seen_in_every_module(self):
+
+        observed_peaks_in_modules = []
+
+        for mod in self.good_modules:
+            module_dataframe = self.all_fitted_peaks_for_modules_without_bad_modules[
+                mod
+            ]
+
+            peaks, counts = np.unique(
+                module_dataframe["calc_peak_tth"], return_counts=True
+            )
+
+            # print(mod, peaks, counts)
+
+            observed_peaks_in_modules.append(peaks)
+
+        sets = [set(arr) for arr in observed_peaks_in_modules]
+        common_observed_peaks = set.intersection(*sets)
+        common_observed_peaks = list(common_observed_peaks)
+
+        print(f"{common_observed_peaks=}")
+
+        return common_observed_peaks
+
     def select_peaks(
         self,
-        fitted_peaks_for_modules,
-        mask_type: PEAK_MASK_LITERAL | None = "select_peaks",
+        fitted_peaks_for_modules: dict[int, pd.DataFrame],
+        mask_type: PEAK_MASK_LITERAL | None = "always_seen",
     ):
+
+        print(f"Select peaks running {mask_type}")
+        time.sleep(1)
+
+        if mask_type == "always_seen":
+            common_observed_peaks = self.find_which_peaks_are_seen_in_every_module()
+
         for module in fitted_peaks_for_modules.keys():
             module_data = fitted_peaks_for_modules[module]
-
-            print(module, "unique peaks", np.unique(module_data["calc_peak_tth"]))
-            print(len(module_data))
 
             if mask_type == "select_peaks":
                 mask = np.isclose(
@@ -1074,13 +1231,20 @@ class AngularCalibrateMythen:
                 mask = (module_data["delta"] < self.upper_delta) & (
                     module_data["delta"] > self.lower_delta
                 )
+            elif mask_type == "always_seen":
+                mask = np.isclose(
+                    module_data["calc_peak_tth"].to_numpy()[:, None],  # shape (rows, 1)
+                    common_observed_peaks,  # type: ignore
+                    rtol=1e-5,
+                    atol=1e-8,
+                ).any(axis=1)
             else:
-                mask = np.ones_like(module_data)  # if none don't mask any
+                mask = np.ones_like(module_data, dtype=bool)  # if none don't mask any
 
             module_data = module_data[mask]
             print(len(module_data))
             # it's a dict
-            fitted_peaks_for_modules[module] = module_data
+            fitted_peaks_for_modules[module] = module_data  # type: ignore
 
         return fitted_peaks_for_modules
 
@@ -1088,12 +1252,16 @@ class AngularCalibrateMythen:
         pydantic_dict = {}
         pydantic_dict["beamline_offset"] = results_dict["beamline_offset"]
 
+        pydantic_dict["rotation_centre_x"] = results_dict["rotation_centre_x"]
+        pydantic_dict["rotation_centre_y"] = results_dict["rotation_centre_y"]
+
         for module in self.active_modules:
             pydantic_dict[f"module_{str(module)}"] = {
+                "radius": results_dict[f"module_{module}_radius"],
+                "module_angle": results_dict[f"module_{module}_offset"],
+                "pixel_direction": results_dict[f"module_{module}_pixel_direction"],
+                "tilt": results_dict[f"module_{module}_tilt"],
                 "centre": results_dict[f"module_{module}_centre"],
-                "conv": results_dict[f"module_{module}_conv"],
-                "offset": results_dict[f"module_{module}_offset"],
-                # "delta_offset": results_dict.get(f"delta_offset_{module}") or 0,
             }
 
         return pydantic_dict
@@ -1181,20 +1349,22 @@ if __name__ == "__main__":
     lower_delta = 0
     upper_delta = 35
 
-    data_dir = "/host-home/projects/outputs/angular_calibration/"
-    si_nexus_file_numbers = [1410289]
-
-    filepaths = generate_filepaths(data_dir, si_nexus_file_numbers)
+    filepath = "/host-home/projects/outputs/angular_calibration/1410289.nxs"
 
     cal = AngularCalibrateMythen(
-        filepaths=filepaths,
+        filepath=filepath,
         wavelength_in_ang=wavelength_in_ang,
         module_centre=CENTRE,
-        bad_modules=[17],
+        bad_modules=[17, 27],
         lower_delta=lower_delta,
         upper_delta=upper_delta,
     )
 
-    cal.get_selected_peaks(mask_type="below", plot_fit=False)
+    cal.get_selected_peaks(mask_type="always_seen", use_pickle=True, plot_fit=True)
 
-    cal.fit(fit_method=fit_method)
+    cal.fit(
+        module_conversion=ModuleConversion2D,
+        fit_method=fit_method,
+        show_plot=True,
+        max_nfev=None,
+    )

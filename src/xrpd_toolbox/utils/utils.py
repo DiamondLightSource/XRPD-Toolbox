@@ -104,10 +104,16 @@ class NexusDatasetMapper:
 
 
 def h5_to_array(filepath: str | Path, data_path: str) -> np.ndarray:
+    """This will convert a Dataset in an h5 file into a numpy array
+    However if the Dataset is large this will quickly run out of memory
+    in which case use lazy loading via
+    with h5pyFile(filepath, "r") as file:
+    """
+
     with h5py.File(filepath, "r", libver="latest", swmr=True) as file:
         data = file.get(data_path)
         if (data is not None) and isinstance(data, Dataset):
-            return np.asarray(data)
+            return np.array(data)
         else:
             raise ValueError(f"Data is None at {data_path} in {filepath}")
 

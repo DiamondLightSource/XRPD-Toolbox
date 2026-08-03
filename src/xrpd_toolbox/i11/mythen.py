@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from h5py import Dataset, File
 from matplotlib.gridspec import GridSpec
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 
 from xrpd_toolbox import BASE_PATH
 from xrpd_toolbox.core import XRPDBaseModel, XYEData
@@ -26,7 +26,8 @@ from xrpd_toolbox.plotting import DataPlot
 from xrpd_toolbox.utils.messenger import Messenger
 from xrpd_toolbox.utils.mythen_utils import (
     channel_to_angle,
-    channel_to_angle_2d,
+    # channel_to_angle_2d,
+    channel_to_angle_2d_offset_rotation_centre,
     modules_to_pixels,
 )
 from xrpd_toolbox.utils.utils import (
@@ -59,11 +60,11 @@ PIXEL_NUMBER = np.arange(PIXELS_PER_MODULE, dtype=int)
 
 class ModuleConversion(XRPDBaseModel):
     conv: float
-    offset: float
+    module_angle: float = Field(validation_alias=AliasChoices("module_angle", "offset"))
     centre: float = CENTRE
 
     @property
-    def module_sign(self) -> int:  # returns -1 or 1 depending on sign of conv
+    def pixel_direction(self) -> int:  # returns -1 or 1 depending on sign of conv
         return int(math.copysign(1, self.conv))
 
     @property
@@ -93,7 +94,7 @@ class ModuleConversion(XRPDBaseModel):
             pixel_number=pixel_number,
             centre=self.centre,
             conv=self.conv,
-            module_offset=self.offset,
+            module_angle=self.module_angle,
             zero_offset=zero_offset,
         )
 
@@ -104,7 +105,8 @@ class ModuleConversion(XRPDBaseModel):
 
 class ModuleConversion2D(XRPDBaseModel):
     radius: float  # mm, nominal module distance from sample
-    offset: float  # deg, angular position of module centre pixel
+    module_angle: float = Field(validation_alias=AliasChoices("module_angle", "offset"))
+    pixel_direction: int  # +1 or -1: sign of legacy `conv`
     tilt: float = 0.0  # deg, module rotation away from tangential
     centre: float = CENTRE  # fixed geometric constant, not fit
     pixel_size: float = MYTHEN_PIXEL_SIZE
@@ -113,26 +115,20 @@ class ModuleConversion2D(XRPDBaseModel):
     def from_psi_method(
         cls,
         conv: float,
-        offset: float,
+        module_angle: float,
         tilt: float = 0.0,
         centre: float = CENTRE,
         pixel_size: float = MYTHEN_PIXEL_SIZE,
     ) -> "ModuleConversion2D":
-        """
-        Build from legacy conv/offset calibration so existing fitted
-        values can seed the new geometry-based parametrisation.
-        conv = pixel_size / radius  =>  radius = pixel_size / conv
-        offset was the old additive angular term; treated here as the
-        starting module_angle (may need refinement once you have real
-        calibration data spread across each module).
-        """
-        radius = pixel_size / conv
+        radius = pixel_size / abs(conv)
+        pixel_direction = int(math.copysign(1, conv))
         return cls(
             radius=radius,
-            offset=offset,
+            module_angle=module_angle,
             tilt=tilt,
             centre=centre,
             pixel_size=pixel_size,
+            pixel_direction=pixel_direction,
         )
 
     def return_raw_tth(self, zero_offset: float) -> np.ndarray:
@@ -143,26 +139,43 @@ class ModuleConversion2D(XRPDBaseModel):
             pixel_number=PIXEL_NUMBER, zero_offset=zero_offset, delta=0
         )
 
-    def return_tth(self, zero_offset: float, delta: float | np.ndarray):
+    def return_tth(
+        self,
+        zero_offset: float,
+        delta: float | np.ndarray,
+        rotation_centre_x: float,
+        rotation_centre_y: float,
+    ):
 
         return self.calculate_tth_for_pixel(
-            pixel_number=PIXEL_NUMBER, zero_offset=zero_offset, delta=delta
+            pixel_number=PIXEL_NUMBER,
+            zero_offset=zero_offset,
+            delta=delta,
+            rotation_centre_x=rotation_centre_x,
+            rotation_centre_y=rotation_centre_y,
         )
 
     def calculate_tth_for_pixel(
-        self, pixel_number: np.ndarray, zero_offset: float, delta: float | np.ndarray
+        self,
+        pixel_number: np.ndarray,
+        zero_offset: float,
+        delta: float | np.ndarray,
+        rotation_centre_x: float = 0,
+        rotation_centre_y: float = 0,
     ) -> np.ndarray:
-        return (
-            channel_to_angle_2d(
-                pixel_number=np.asarray(pixel_number),
-                centre=self.centre,
-                pixel_size=self.pixel_size,
-                radius=self.radius,
-                module_angle=self.offset,
-                tilt=self.tilt,
-                zero_offset=zero_offset,
-            )
-            + delta
+
+        return channel_to_angle_2d_offset_rotation_centre(
+            pixel_number=np.asarray(pixel_number),
+            centre=self.centre,
+            pixel_size=self.pixel_size,
+            radius=self.radius,
+            module_angle=self.module_angle,
+            tilt=self.tilt,
+            zero_offset=zero_offset,
+            pixel_direction=self.pixel_direction,
+            delta=delta,
+            rotation_centre_x=rotation_centre_x,
+            rotation_centre_y=rotation_centre_y,
         )
 
 
@@ -199,11 +212,46 @@ class AngularCalibration(XRPDBaseModel):
     module_27: ModuleConversion | ModuleConversion2D
 
 
+class AngularCalibration2D(XRPDBaseModel):
+    beamline_offset: float = 0.0
+    rotation_centre_x: float = 0.0
+    rotation_centre_y: float = 0.0
+    module_0: ModuleConversion2D
+    module_1: ModuleConversion2D
+    module_2: ModuleConversion2D
+    module_3: ModuleConversion2D
+    module_4: ModuleConversion2D
+    module_5: ModuleConversion2D
+    module_6: ModuleConversion2D
+    module_7: ModuleConversion2D
+    module_8: ModuleConversion2D
+    module_9: ModuleConversion2D
+    module_10: ModuleConversion2D
+    module_11: ModuleConversion2D
+    module_12: ModuleConversion2D
+    module_13: ModuleConversion2D
+    module_14: ModuleConversion2D
+    module_15: ModuleConversion2D
+    module_16: ModuleConversion2D
+    module_17: ModuleConversion2D
+    module_18: ModuleConversion2D
+    module_19: ModuleConversion2D
+    module_20: ModuleConversion2D
+    module_21: ModuleConversion2D
+    module_22: ModuleConversion2D
+    module_23: ModuleConversion2D
+    module_24: ModuleConversion2D
+    module_25: ModuleConversion2D
+    module_26: ModuleConversion2D
+    module_27: ModuleConversion2D
+
+
 # TODO: "internal", "external", "best" in error calc have been added
 # for backward compatibility but should remove
 # also data_reduction_mode can be an int for backward compatibility but should remove
 
 data_reduction_mode_mapping = {0: "step_scan", 1: "time_resolved", 2: "pump_probe"}
+legacy_error = {"internal": "poisson", "external": "std_dev", "best": "max"}
 
 
 class MythenSettings(XRPDBaseModel):
@@ -218,9 +266,11 @@ class MythenSettings(XRPDBaseModel):
     rebin_step: float = 0.004
     default_counter: int = Field(default=0, ge=0, le=3)
     edge_bad_channels: int = 15
-    error_calc: Literal["poisson", "std_dev", "max", "internal", "external", "best"] = (
-        "poisson"
-    )
+    error_calc: Literal[
+        "poisson",
+        "std_dev",
+        "max",
+    ] = "poisson"
     data_reduction_mode: Literal[
         "step_scan", "time_resolved", "pump_probe", "flat_field", "bad_pixel"
     ] = "step_scan"
@@ -229,6 +279,15 @@ class MythenSettings(XRPDBaseModel):
         "/dls_sw/i11/software/mythen3/diamond/ang_cal_020426_cen_639.5_least_squares.json"
     )
     normalise: bool = False
+
+    @field_validator("error_calc", mode="before")
+    @classmethod
+    def validate_error_calc(cls, value: str):
+
+        if value in list(legacy_error.keys()):
+            return legacy_error[value]
+        else:
+            return value
 
     @field_validator("bad_channels_filepath")
     @classmethod
@@ -350,6 +409,25 @@ class BadChannels:
 
         return bad_channel_mask  # bad channels are denoted by 1
 
+    def add_bad_channels(self, bad_channels: list[int] | np.ndarray):
+        """Add bad channels using global index, ie 0-1280*N_mod"""
+
+        self.bad_channels = np.append(self.bad_channels, bad_channels)
+        self.masks = self.bad_channels_to_mask()
+
+    def add_bad_channel_to_module(
+        self, module: int, module_bad_channel: list[int] | np.ndarray
+    ):
+
+        if any(np.array(module_bad_channel, dtype=int) > 1280):
+            raise ValueError("Must be the index of the module pixel")
+
+        self.bad_channels = np.append(
+            self.bad_channels, module + np.array(module_bad_channel)
+        )
+
+        self.masks[module][module_bad_channel] = True
+
 
 class MythenDataLoader:
     def __init__(
@@ -374,6 +452,9 @@ class MythenDataLoader:
             self.data, self.module_data = self.load()
         else:
             self.data = self.get_data(modules=self.modules, frame=self.frames)
+            self.module_data = np.array_split(
+                self.data, self.n_modules_in_data, axis=-1
+            )
 
     def load(self):
         self.data = self.load_all_data(self.counter)
@@ -440,10 +521,13 @@ class MythenDataLoader:
     def positions(self) -> np.ndarray:
         try:
             deltas = h5_to_array(self.filepath, self.delta_path)
-            return deltas
         except ValueError as e:
             print(f"{e} - {self.delta_path} in data - returning 0")
-            deltas = np.array([0])
+            deltas = np.zeros_like(self.data)
+
+        if self.frames is not None:
+            return deltas[self.frames]  # type: ignore
+        else:
             return deltas
 
     @cached_property
@@ -466,20 +550,29 @@ class MythenDataLoader:
         return self.get_data(slice(None), slice(None), counter)
 
 
+# TODO: This should be folded into AngularCalibration.
+# This and ModuleConversion are very similar,
+# and every MythenModule contains the same positions and durations
 class MythenModule:
     def __init__(
         self,
         data: np.ndarray,
-        conversion: ModuleConversion,
+        conversion: ModuleConversion | ModuleConversion2D,
         beamline_offset: float,
         module_id: int,
         positions: np.ndarray,
+        rotation_centre_x: float = 0,
+        rotation_centre_y: float = 0,
         durations: np.ndarray | None = None,
         bad_channel_mask: np.ndarray | None = None,
     ):
         self.data = data
         self.conversion = conversion
         self.beamline_offset = beamline_offset
+
+        self.rotation_centre_x = rotation_centre_x
+        self.rotation_centre_y = rotation_centre_y
+
         self.positions = positions
         self.module_id = module_id
 
@@ -543,7 +636,18 @@ class MythenModule:
         with the tth values at the corresponding indexes"""
 
         delta = self.positions[:, None]
-        return self.conversion.return_tth(self.beamline_offset, delta)
+
+        if isinstance(self.conversion, ModuleConversion):
+            return self.conversion.return_tth(self.beamline_offset, delta)
+        elif isinstance(self.conversion, ModuleConversion2D):
+            return self.conversion.return_tth(
+                zero_offset=self.beamline_offset,
+                delta=delta,
+                rotation_centre_x=self.rotation_centre_x,
+                rotation_centre_y=self.rotation_centre_y,
+            )
+        else:
+            raise Exception()
 
     @cached_property
     def mask_2d(self) -> np.ndarray:
@@ -597,10 +701,11 @@ class MythenDetector:
     def __init__(
         self,
         filepath: str | Path,
-        angular_calibration: AngularCalibration | None = None,
+        angular_calibration: AngularCalibration | AngularCalibration2D | None = None,
         settings: MythenSettings | None = None,
         xye_filepath_out: str | Path | None = None,
         output_directory: str | Path | None = None,
+        frames: int | slice | list[int] = slice(None),
         filename_suffix: str = "",
     ):
         self.filepath = filepath
@@ -615,6 +720,8 @@ class MythenDetector:
 
         self.file_dir = os.path.dirname(str(self.filepath))
         self.filename = str(Path(self.filepath).stem)
+
+        self.frames = frames
 
         self.output_directory = output_directory or os.path.join(
             str(self.file_dir), "processed"
@@ -664,6 +771,7 @@ class MythenDetector:
 
         self.mythen_data = MythenDataLoader(
             filepath=filepath,
+            frames=self.frames,
         )
 
         self.contruct_modules()
@@ -683,6 +791,8 @@ class MythenDetector:
             positions=self.mythen_data.positions,
             durations=self.mythen_data.durations,
             bad_channel_mask=self.bad_channels.masks[n_module],
+            rotation_centre_x=self.calibration.get("rotation_centre_x") or 0,
+            rotation_centre_y=self.calibration.get("rotation_centre_y") or 0,
         )
 
         return mythen_module
@@ -938,7 +1048,11 @@ class MythenDetector:
         plt.close()
 
     def plot_by_region_of_interest(
-        self, peaks: list[float], tol: float = 0.03, filepath: str | None = None
+        self,
+        peaks: list[float],
+        tol: float = 0.03,
+        filepath: str | None = None,
+        show: bool = False,
     ):
         fig = plt.figure(figsize=(15, 10))
 
@@ -988,7 +1102,8 @@ class MythenDetector:
         plt.ylabel("Intensity (arb. units)")
         if filepath:
             plt.savefig(filepath)
-        plt.show()
+        if show:
+            plt.show()
         plt.close()
 
 
@@ -1047,47 +1162,55 @@ def convert_angcal_to_new_pydantic_json(
 
 
 if __name__ == "__main__":
-    PARENT_PATH = Path(__file__).parent.parent
-
-    print(PARENT_PATH)
-
-    CONFIG_FILE = "/workspaces/XRPD-Toolbox/config/i11/mythen3_reduction_config.toml"
-
-    DATA_FILE = "//host-home/projects/outputs/step_scan/1410289.nxs"
-
-    ANG_CAL = "/host-home/projects/outputs/mythen_calibration/processed/ang_cal_020426_cen_639.5_leastsq_[11, 17, 27]_new.json"  # noqa
-
-    settings = MythenSettings.load_from_toml(CONFIG_FILE)
-    # settings.bad_modules = list(range(27))
-    print("Loaded settings:", settings)
-
-    # print(DATA_FILE)
-
-    # MythenDataLoader(DATA_FILE)
-
-    BAD_CHAN_FILE = "/workspaces/XRPD-Toolbox/config/i11/badchannels.txt"
-
-    angular_calibration = AngularCalibration.load_from_json(ANG_CAL)
-    # angular_calibration.beamline_offset = -0.4979739
-
-    settings.bad_channels_filepath = BAD_CHAN_FILE
-
-    # DATA_FILE = "/workspaces/XRPD-Toolbox/examples/i11/step_scan/1414223.nxs"
-    DATA_FILE = "/host-home/projects/outputs/angular_calibration/1410289.nxs"
-
-    mythen3 = MythenDetector(
-        filepath=DATA_FILE,
-        settings=settings,
-        angular_calibration=angular_calibration,
+    module_conv_psi = ModuleConversion(
+        conv=6.5,
+        module_angle=45,
+        centre=CENTRE,
     )
 
-    tth, counts, error = mythen3.plot_diffraction(
-        filepath="/host-home/projects/outputs/diff.png", calibrant="Si"
-    )
 
-    # mythen3.plot_diffraction_by_mod()
+# if __name__ == "__main__":
+#     PARENT_PATH = Path(__file__).parent.parent
 
-    quit()
+#     print(PARENT_PATH)
+
+#     CONFIG_FILE = "/workspaces/XRPD-Toolbox/config/i11/mythen3_reduction_config.toml"
+
+#     DATA_FILE = "//host-home/projects/outputs/step_scan/1410289.nxs"
+
+#     ANG_CAL = "/host-home/projects/outputs/mythen_calibration/processed/ang_cal_020426_cen_639.5_leastsq_[11, 17, 27]_new.json"  # noqa
+
+#     settings = MythenSettings.load_from_toml(CONFIG_FILE)
+#     # settings.bad_modules = list(range(27))
+#     print("Loaded settings:", settings)
+
+#     # print(DATA_FILE)
+
+#     # MythenDataLoader(DATA_FILE)
+
+#     BAD_CHAN_FILE = "/workspaces/XRPD-Toolbox/config/i11/badchannels.txt"
+
+#     angular_calibration = AngularCalibration.load_from_json(ANG_CAL)
+#     # angular_calibration.beamline_offset = -0.4979739
+
+#     settings.bad_channels_filepath = BAD_CHAN_FILE
+
+#     # DATA_FILE = "/workspaces/XRPD-Toolbox/examples/i11/step_scan/1414223.nxs"
+#     DATA_FILE = "/host-home/projects/outputs/angular_calibration/1410289.nxs"
+
+#     mythen3 = MythenDetector(
+#         filepath=DATA_FILE,
+#         settings=settings,
+#         angular_calibration=angular_calibration,
+#     )
+
+#     tth, counts, error = mythen3.plot_diffraction(
+#         filepath="/host-home/projects/outputs/diff.png", calibrant="Si"
+#     )
+
+#     # mythen3.plot_diffraction_by_mod()
+
+#     quit()
 
 #     active_modules = list(range(28))
 

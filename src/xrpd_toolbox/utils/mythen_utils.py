@@ -35,26 +35,27 @@ def channel_to_angle(
     pixel_number: npt.NDArray[np.int_],
     centre: int | float,
     conv: int | float,
-    module_offset: int | float,
+    module_angle: int | float,
     zero_offset: int | float,
 ) -> np.ndarray:
     module_conversions = pixel_number - centre
     module_conversions = module_conversions * conv
     module_conversions = np.arctan(module_conversions)
-    raw_tth = module_offset + np.rad2deg(module_conversions) + zero_offset
+    raw_tth = module_angle + np.rad2deg(module_conversions) + zero_offset
 
     return raw_tth
 
 
 def channel_to_angle_2d(
-    pixel_number: npt.NDArray[np.int_],
+    pixel_number: npt.NDArray[np.integer],
     centre: float,
     pixel_size: float,
     radius: float,
     module_angle: float,
     tilt: float,
     zero_offset: float,
-) -> np.ndarray:
+    pixel_direction: int,
+) -> npt.NDArray[np.float64]:
     """
     Convert pixel number to two-theta using full 2D module geometry.
 
@@ -62,19 +63,73 @@ def channel_to_angle_2d(
     in real space (polar coords about the sample). tilt is the module's
     own rotation away from perfectly tangential, so its effect on tth
     grows non-linearly across the module (unlike a flat offset).
+    pixel_direction is +1/-1 for whether increasing pixel number walks
+    tangentially clockwise or counter-clockwise (the sign that used to
+    live in the legacy `conv` term).
     """
-    displacement_mm = (pixel_number - centre) * pixel_size
+    displacement_mm: npt.NDArray[np.float64] = (
+        pixel_number.astype(np.float64) - centre
+    ) * pixel_size
+
+    module_angle_rad: float = np.deg2rad(module_angle)
+    module_x: float = radius * np.cos(module_angle_rad)
+    module_y: float = radius * np.sin(module_angle_rad)
+
+    direction_rad: float = (
+        module_angle_rad + pixel_direction * np.pi / 2 + np.deg2rad(tilt)
+    )
+
+    x: npt.NDArray[np.float64] = module_x + displacement_mm * np.cos(direction_rad)
+    y: npt.NDArray[np.float64] = module_y + displacement_mm * np.sin(direction_rad)
+
+    raw_tth: npt.NDArray[np.float64] = np.rad2deg(np.arctan2(y, x)) + zero_offset
+    return raw_tth
+
+
+def channel_to_angle_2d_offset_rotation_centre(
+    pixel_number: npt.NDArray[np.integer],
+    centre: float,
+    pixel_size: float,
+    radius: float,
+    module_angle: float,
+    tilt: float,
+    zero_offset: float,
+    pixel_direction: int,
+    delta: float | npt.NDArray[np.float64],
+    rotation_centre_x: float = 0.0,
+    rotation_centre_y: float = 0.0,
+) -> npt.NDArray[np.float64]:
+    """
+    rotation_centre_x/y locate the arc's mechanical pivot in mm,
+    relative to the sample position at the origin. If the pivot
+    coincides with the sample (0, 0), rotating by delta is a pure
+    angular shift and this reduces to the old `raw_tth + delta`
+    behaviour. If it doesn't, the module's distance from the sample
+    changes with delta too, which this rotation captures correctly.
+    """
+    displacement_mm = (pixel_number.astype(np.float64) - centre) * pixel_size
 
     module_angle_rad = np.deg2rad(module_angle)
     module_x = radius * np.cos(module_angle_rad)
     module_y = radius * np.sin(module_angle_rad)
 
-    direction_rad = module_angle_rad + np.pi / 2 + np.deg2rad(tilt)
+    direction_rad = module_angle_rad + pixel_direction * np.pi / 2 + np.deg2rad(tilt)
 
     x = module_x + displacement_mm * np.cos(direction_rad)
     y = module_y + displacement_mm * np.sin(direction_rad)
 
-    raw_tth = np.rad2deg(np.arctan2(y, x)) + zero_offset
+    # rotate each pixel's position about the arc's true pivot, not the origin
+    delta_rad = np.deg2rad(delta)
+    cos_d = np.cos(delta_rad)
+    sin_d = np.sin(delta_rad)
+
+    dx = x - rotation_centre_x
+    dy = y - rotation_centre_y
+
+    x_rot = rotation_centre_x + dx * cos_d - dy * sin_d
+    y_rot = rotation_centre_y + dx * sin_d + dy * cos_d
+
+    raw_tth = np.rad2deg(np.arctan2(y_rot, x_rot)) + zero_offset
     return raw_tth
 
 

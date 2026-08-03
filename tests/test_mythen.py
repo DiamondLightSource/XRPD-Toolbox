@@ -1,11 +1,31 @@
+import math
 import os
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from xrpd_toolbox import BASE_PATH
 from xrpd_toolbox.core import XYEData
-from xrpd_toolbox.i11.mythen import MythenDetector, MythenSettings
+from xrpd_toolbox.i11.mythen import (
+    CENTRE,
+    DEFAULT_BAD_CHANS,
+    MODULES_IN_DETECTOR,
+    MYTHEN_PIXEL_SIZE,
+    PIXEL_NUMBER,
+    PSD_RADIUS,
+    BadChannels,
+    ModuleConversion,
+    ModuleConversion2D,
+    MythenDetector,
+    MythenSettings,
+)
+from xrpd_toolbox.utils.mythen_utils import (
+    calc_intial_module_conv,
+    calc_starting_module_offset,
+    channel_to_angle,
+    channel_to_angle_2d_offset_rotation_centre,
+)
 
 CONFIG_FILE = (
     Path(__file__).parent.parent / "config" / "i11" / "mythen3_reduction_config.toml"
@@ -113,7 +133,7 @@ def test_data_reduction_mode_validation():
         rebin_step=0.004,
         default_counter=0,
         edge_bad_channels=10,
-        error_calc="internal",
+        error_calc="internal",  # type: ignore
         data_reduction_mode=0,  # type: ignore
         bad_channels_filepath="bad_channels.txt",
         angcal_filepath="angcal.off",
@@ -128,5 +148,112 @@ def test_legacy_toml():
     assert legacy_setting
 
 
-def test_mythen_angular_calculations_are_correct():
-    raise NotImplementedError()
+def test_add_bad_channel():
+
+    bad_channels = BadChannels(DEFAULT_BAD_CHANS, 0, 28)
+
+    assert not all(bad_channels.masks[5][0:256])
+
+    bad_channels.add_bad_channel_to_module(5, np.arange(0, 256, 1, dtype=int))
+
+    assert all(bad_channels.masks[5][0:256])
+
+    bad_channels_in_masks = 0
+    for module in range(MODULES_IN_DETECTOR):
+        bad_channels_in_masks = bad_channels_in_masks + len(
+            np.argwhere(bad_channels.masks[module])
+        )
+
+    assert len(bad_channels.bad_channels) == bad_channels_in_masks
+
+
+@pytest.mark.parametrize(
+    "module",
+    list(range(28)),
+)
+def test_2d_and_1d_module_conversion_get_same_result_when_untilted(module: int):
+
+    convs = calc_intial_module_conv(MYTHEN_PIXEL_SIZE / PSD_RADIUS)
+    offsets = calc_starting_module_offset()
+
+    conv = convs[module]
+    pixel_direction = int(math.copysign(1, conv))
+
+    zero_offset = 0
+    delta = 5
+
+    module_conv_psi = ModuleConversion(
+        conv=conv,
+        module_angle=offsets[module],
+        centre=CENTRE,
+    )
+
+    psi_tth = module_conv_psi.calculate_tth_for_pixel(
+        pixel_number=PIXEL_NUMBER, zero_offset=zero_offset, delta=delta
+    )
+
+    module_conv_2d = ModuleConversion2D(
+        radius=PSD_RADIUS,
+        module_angle=offsets[module],
+        pixel_direction=pixel_direction,
+        tilt=0,
+        centre=CENTRE,
+        pixel_size=MYTHEN_PIXEL_SIZE,
+    )
+
+    tth_2d = module_conv_2d.calculate_tth_for_pixel(
+        pixel_number=PIXEL_NUMBER, zero_offset=zero_offset, delta=delta
+    )
+
+    for psi, new in zip(psi_tth, tth_2d, strict=True):
+        assert psi == pytest.approx(new, abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    "module",
+    list(range(28)),
+)
+def test_channel_to_angle_2d_with_offset_rotation_centre_get_same_result_when_untilted(
+    module: int,
+):
+
+    convs = calc_intial_module_conv(MYTHEN_PIXEL_SIZE / PSD_RADIUS)
+    module_angles = calc_starting_module_offset()
+
+    conv = convs[module]
+    module_angle = module_angles[module]
+
+    pixel_direction = int(math.copysign(1, conv))
+
+    zero_offset = 0
+    delta = 5
+
+    psi_tth = (
+        channel_to_angle(
+            pixel_number=PIXEL_NUMBER,
+            centre=CENTRE,
+            conv=conv,
+            module_angle=module_angle,
+            zero_offset=zero_offset,
+        )
+        + delta
+    )
+
+    tth_2d = channel_to_angle_2d_offset_rotation_centre(
+        pixel_number=PIXEL_NUMBER,
+        centre=CENTRE,
+        pixel_size=MYTHEN_PIXEL_SIZE,
+        radius=PSD_RADIUS,
+        module_angle=module_angle,
+        tilt=0,
+        zero_offset=zero_offset,
+        pixel_direction=pixel_direction,
+        delta=delta,
+    )
+
+    for psi, new in zip(psi_tth, tth_2d, strict=True):
+        assert psi == pytest.approx(new, abs=1e-12)
+
+
+# def test_mythen_angular_calculations_are_correct():
+#     raise NotImplementedError()
