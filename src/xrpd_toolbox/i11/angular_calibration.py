@@ -5,6 +5,7 @@ import time
 import warnings
 from collections.abc import Collection, Sequence
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 import matplotlib.pyplot as plt
@@ -19,6 +20,7 @@ from scipy.interpolate import interp1d
 from xrpd_toolbox.fit_engine.peaks import closest_indices, gaussian
 from xrpd_toolbox.i11.mythen import (
     CENTRE,
+    DEFAULT_ANG_CAL,
     DEFAULT_BAD_CHANS,
     MYTHEN_PIXEL_SIZE,
     PIXELS_PER_MODULE,
@@ -36,7 +38,7 @@ from xrpd_toolbox.utils.mythen_utils import (
     calc_starting_module_offset,
     channel_to_angle,
     # paired_modules,
-    read_singular_angcal_files,
+    # read_singular_angcal_files,
 )
 from xrpd_toolbox.utils.utils import (
     get_calibrant_peaks,
@@ -61,7 +63,7 @@ def module_distance(module: int):
     return normalised
 
 
-def plot_convs(conv: pd.DataFrame, steps):
+def plot_convs(conv: pd.DataFrame, steps, output_path: str):
     plt.figure(figsize=(16, 10))
 
     import matplotlib.cm as cm
@@ -92,7 +94,7 @@ def plot_convs(conv: pd.DataFrame, steps):
     plt.legend()
     plt.xlabel("Delta Range of Calibration")
     plt.ylabel("Calibrated Distance of Module (mm)")
-    plt.savefig("/host-home/projects/outputs/step_cals.png")
+    plt.savefig(f"{output_path}/step_cals.png")
     plt.show()
     plt.close()
 
@@ -160,9 +162,11 @@ class AngularCalibrateMythen:
         self,
         filepath: str,
         wavelength_in_ang: float,
+        calibrant_name: Literal["Si", "LaB6"] = "Si",
         module_centre: float = CENTRE,
         active_modules=tuple(range(28)),  # noqa
         bad_modules: list[int] = [17],  # noqa
+        output_path: str | None = None,
         lower_delta: float = 0,
         upper_delta: float = 90,
     ):
@@ -176,11 +180,22 @@ class AngularCalibrateMythen:
         self.filename = os.path.basename(filepath)
         self.filenumber = self.filename.replace(".nxs", "")
 
+        if output_path is None:
+            self.output_path = str(
+                Path(filepath).parent
+                / Path(filepath).name.replace(".nxs", "_calibration")
+            )
+        else:
+            self.output_path = output_path
+
+        if not os.path.exists(self.output_path):
+            os.makedirs(self.output_path)
+
         self.pickled_peaks_filepath = (
-            f"/host-home/projects/outputs/{self.filenumber}_fitted_peaks.obj"
+            f"{self.output_path}/{self.filenumber}_fitted_peaks.obj"
         )
 
-        self.split_peaks_filepath = f"/host-home/projects/outputs/mythen_calibration/processed/{self.filenumber}_modules.h5"  # noqa
+        self.split_peaks_filepath = f"{self.output_path}/{self.filenumber}_modules.h5"  # noqa
 
         self.wavelength_in_ang = wavelength_in_ang
 
@@ -193,21 +208,28 @@ class AngularCalibrateMythen:
             f for f in self.active_modules if f not in self.bad_modules
         ]
 
+        self.calibrant_name = calibrant_name
+
         self.observed_reflections_in_tth = get_calibrant_peaks(
-            "Si", self.wavelength_in_ang
+            self.calibrant_name, self.wavelength_in_ang
         )
 
         print(self.observed_reflections_in_tth)
 
-        self.peaks_to_fit = [
-            69.6350914079859,
-            71.75570444785892,
-            75.23501956270378,
-            77.29530751474618,
-            80.69374073239572,
-            82.71626960778555,
-            86.06823060567002,
-            88.07221803978473,
+        # self.peaks_to_fit = [
+        #     69.6350914079859,
+        #     71.75570444785892,
+        #     75.23501956270378,
+        #     77.29530751474618,
+        #     80.69374073239572,
+        #     82.71626960778555,
+        #     86.06823060567002,
+        #     88.07221803978473,
+        # ]
+
+        self.peaks_to_fit = self.observed_reflections_in_tth[
+            (self.observed_reflections_in_tth < 90)
+            & (self.observed_reflections_in_tth > 65)
         ]
 
         self.module_centre = module_centre  # 639.5p = 31.975 mm from the center of det
@@ -215,12 +237,26 @@ class AngularCalibrateMythen:
 
         self.init_conv = self.p / self.psd_radius  # 6.56e-5
 
-        self.single_peak = True  # True is much better
+        self.single_peak = False  # True is much better
 
+        # ang_cal = "/host-home/projects/outputs/mythen_calibration/processed/ang_cal_171125.off"  # noqa
         ang_cal = "/host-home/projects/outputs/mythen_calibration/processed/ang_cal_171125.off"  # noqa
-        self.module_angular_cal, self.beamline_offset = read_singular_angcal_files(
-            ang_cal
-        )  # ["offset"], module_cal["conv"], module_cal["centre"]
+
+        ang_cal_obj = AngularCalibration.load(DEFAULT_ANG_CAL)
+        self.beamline_offset = ang_cal_obj.beamline_offset
+
+        self.module_angular_cal = {}
+
+        for i in range(28):
+            self.module_angular_cal[i] = {
+                "offset": ang_cal_obj.__getattribute__(f"module_{i}").module_angle,
+                "conv": ang_cal_obj.__getattribute__(f"module_{i}").conv,
+                "centre": ang_cal_obj.__getattribute__(f"module_{i}").centre,
+            }
+
+        # self.module_angular_cal, self.beamline_offset = read_singular_angcal_files(
+        #     ang_cal
+        # )  # ["offset"], module_cal["conv"], module_cal["centre"]
 
         bad_chan_obj = BadChannels(filepath=DEFAULT_BAD_CHANS, n_edge_bad_channels=10)
 
@@ -238,13 +274,12 @@ class AngularCalibrateMythen:
         plot_fit: bool = True,
     ):
 
-        if not use_pickle:
-            if not os.path.exists(self.split_peaks_filepath):
-                module_datasets = self.split_into_modules(  # noqa
-                    filepath=self.filepath,
-                    out_filepath=self.split_peaks_filepath,
-                    bad_channels=list(self.bad_channels),
-                )  # (delta, n_modules, PIXELS_PER_MODULE)
+        if not os.path.exists(self.split_peaks_filepath) or not use_pickle:
+            module_datasets = self.split_into_modules(  # noqa
+                filepath=self.filepath,
+                out_filepath=self.split_peaks_filepath,
+                bad_channels=list(self.bad_channels),
+            )  # (delta, n_modules, PIXELS_PER_MODULE)
 
             delta_points = h5_to_array(self.filepath, "/entry/mythen_nx/delta")
 
@@ -326,7 +361,6 @@ class AngularCalibrateMythen:
         starting_params="guess",
         plot_fit: bool = True,
         show_plot: bool = False,
-        output_dir: str = "/host-home/projects/outputs/mythen_calibration/processed",
         max_nfev: int | None = None,
     ):
 
@@ -370,7 +404,7 @@ class AngularCalibrateMythen:
         year = datetime.now().year
         month = datetime.now().month
 
-        angcal_filepath = f"{output_dir}/ang_cal_{month}{year}_cen_{self.module_centre}_{fit_method}_{self.bad_modules}.off"  # noqa
+        angcal_filepath = f"{self.output_path}/ang_cal_{month}{year}_cen_{self.module_centre}_{fit_method}_{self.bad_modules}.off"  # noqa
 
         self.results_dict: dict = results.params.valuesdict()  # type: ignore
         print(self.results_dict)
@@ -426,14 +460,14 @@ class AngularCalibrateMythen:
                 analysis.plot_by_region_of_interest(
                     [peak],
                     tol=0.04,
-                    filepath=f"/host-home/projects/outputs/roi_{self.filename}_{peak}.png",
+                    filepath=f"/{self.output_path}/roi_{self.filename}_{peak}.png",
                     show=show_plot,
                 )
 
             analysis.plot_by_region_of_interest(
                 plotting_peaks,
                 tol=0.04,
-                filepath=f"/host-home/projects/outputs/roi_{self.filename}.png",
+                filepath=f"/{self.output_path}/roi_{self.filename}.png",
                 show=show_plot,
             )
 
@@ -627,14 +661,23 @@ class AngularCalibrateMythen:
                             real_tth_no_nan, non_nan_dataset, ind=pixel_peak_in_data
                         )
 
-                        interp_func = interp1d(real_tth_no_nan, module_pixel_number)
+                        interp_func = interp1d(
+                            real_tth_no_nan,
+                            module_pixel_number,
+                            bounds_error=False,
+                            fill_value="extrapolate",  # type: ignore
+                        )
 
                         try:
                             pixel_peak_in_data_refined = interp_func(
                                 tth_peaks_centres_in_data_refined
                             )
 
-                            if (
+                            print(pixel_peak_in_data_refined)
+                            print(tth_peaks_centres_in_data)
+                            print(tth_peaks_centres_in_data_refined)
+
+                            if all(
                                 abs(
                                     tth_peaks_centres_in_data_refined
                                     - tth_peaks_centres_in_data
@@ -654,6 +697,8 @@ class AngularCalibrateMythen:
                         except Exception as e:
                             pixel_peak_in_data_refined = tth_peaks_centres_in_data
                             print(e)
+                            print("ass")
+                            quit()
                     try:
                         if (
                             abs(
@@ -668,13 +713,13 @@ class AngularCalibrateMythen:
                         continue
 
                     # if np.min(tth_calculated_peak_centres) < 25:
-                    #     plt.plot(real_tth, non_nan_dataset)
-                    #     plt.scatter(
-                    #         tth_peaks_centres_in_data,
-                    #         non_nan_dataset[pixel_peak_in_data.astype(int)],
-                    #         color="red",
-                    #     )
-                    #     plt.show()
+                    plt.plot(real_tth, non_nan_dataset)
+                    plt.scatter(
+                        tth_peaks_centres_in_data,
+                        non_nan_dataset[pixel_peak_in_data.astype(int)],
+                        color="red",
+                    )
+                    plt.show()
 
                     if (
                         n_calc != n_data
@@ -1065,7 +1110,7 @@ class AngularCalibrateMythen:
 
         return params
 
-    def plot_fit_stats(self, fitted_peaks_for_modules: dict):
+    def plot_fit_stats(self, fitted_peaks_for_modules: dict[str, pd.DataFrame]):
         peak_fits = pd.DataFrame(
             columns=["peak"].extend(list(fitted_peaks_for_modules.keys()))
         )
@@ -1096,25 +1141,28 @@ class AngularCalibrateMythen:
                     label=str(np.round(peak, 2)),
                 )
 
-                m, b = np.polyfit(
-                    peak_in_module["delta"].to_numpy(),
-                    peak_in_module["pixel"].to_numpy(),
-                    1,
-                )
-                print(m, b)
-                peak_data_gradient.append(m)
+                # m, b = np.polyfit(
+                #     peak_in_module["delta"].to_numpy(),
+                #     peak_in_module["pixel"].to_numpy(),
+                #     1,
+                # )
+                # print(m, b)
+                # peak_data_gradient.append(m)
 
-                plt.plot(
-                    peak_in_module["delta"],
-                    (m * peak_in_module["delta"]) + b,
-                    color="red",
-                )
-            peak_fits[str(module)] = peak_data_gradient
+                # plt.plot(
+                #     peak_in_module["delta"],
+                #     (m * peak_in_module["delta"]) + b,
+                #     color="red",
+                # )
             plt.legend()
             plt.xlabel("Rotation of detector (delta)")
             plt.ylabel("Pixel of module")
-            plt.savefig(f"/host-home/projects/outputs/peak_fits_{module}.png")
+            plt.savefig(f"{self.output_path}/peak_fits_{module}.png")
             plt.close()
+            try:
+                peak_fits[str(module)] = peak_data_gradient
+            except Exception as e:
+                print(f"Error occurred while saving peak fits for module {module}: {e}")
 
         mean_grads = []
 
@@ -1140,11 +1188,11 @@ class AngularCalibrateMythen:
         plt.ylabel("Mean Gradient Of Peak Fit pixel/delta")
         plt.xlabel("Module number")
         plt.grid(True)
-        plt.savefig("/host-home/projects/outputs/gradient.png")
+        plt.savefig(f"{self.output_path}/gradient.png")
         plt.show()
         plt.close()
 
-        peak_fits.to_csv("/host-home/projects/outputs/peak_gradients.csv")
+        peak_fits.to_csv(f"{self.output_path}/peak_gradients.csv")
 
     def remove_bad_modules(self, fitted_peaks_for_modules: dict):
         for bad_module in self.bad_modules:
@@ -1354,13 +1402,15 @@ if __name__ == "__main__":
     cal = AngularCalibrateMythen(
         filepath=filepath,
         wavelength_in_ang=wavelength_in_ang,
+        calibrant_name="Si",
         module_centre=CENTRE,
         bad_modules=[17, 27],
+        output_path=None,
         lower_delta=lower_delta,
         upper_delta=upper_delta,
     )
 
-    cal.get_selected_peaks(mask_type="always_seen", use_pickle=True, plot_fit=True)
+    cal.get_selected_peaks(mask_type="always_seen", use_pickle=False, plot_fit=True)
 
     cal.fit(
         module_conversion=ModuleConversion2D,

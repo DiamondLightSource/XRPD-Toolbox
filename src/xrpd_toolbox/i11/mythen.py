@@ -182,34 +182,34 @@ class ModuleConversion2D(XRPDBaseModel):
 # TODO: Make module_n a dict?
 class AngularCalibration(XRPDBaseModel):
     beamline_offset: float = 0.0
-    module_0: ModuleConversion | ModuleConversion2D
-    module_1: ModuleConversion | ModuleConversion2D
-    module_2: ModuleConversion | ModuleConversion2D
-    module_3: ModuleConversion | ModuleConversion2D
-    module_4: ModuleConversion | ModuleConversion2D
-    module_5: ModuleConversion | ModuleConversion2D
-    module_6: ModuleConversion | ModuleConversion2D
-    module_7: ModuleConversion | ModuleConversion2D
-    module_8: ModuleConversion | ModuleConversion2D
-    module_9: ModuleConversion | ModuleConversion2D
-    module_10: ModuleConversion | ModuleConversion2D
-    module_11: ModuleConversion | ModuleConversion2D
-    module_12: ModuleConversion | ModuleConversion2D
-    module_13: ModuleConversion | ModuleConversion2D
-    module_14: ModuleConversion | ModuleConversion2D
-    module_15: ModuleConversion | ModuleConversion2D
-    module_16: ModuleConversion | ModuleConversion2D
-    module_17: ModuleConversion | ModuleConversion2D
-    module_18: ModuleConversion | ModuleConversion2D
-    module_19: ModuleConversion | ModuleConversion2D
-    module_20: ModuleConversion | ModuleConversion2D
-    module_21: ModuleConversion | ModuleConversion2D
-    module_22: ModuleConversion | ModuleConversion2D
-    module_23: ModuleConversion | ModuleConversion2D
-    module_24: ModuleConversion | ModuleConversion2D
-    module_25: ModuleConversion | ModuleConversion2D
-    module_26: ModuleConversion | ModuleConversion2D
-    module_27: ModuleConversion | ModuleConversion2D
+    module_0: ModuleConversion
+    module_1: ModuleConversion
+    module_2: ModuleConversion
+    module_3: ModuleConversion
+    module_4: ModuleConversion
+    module_5: ModuleConversion
+    module_6: ModuleConversion
+    module_7: ModuleConversion
+    module_8: ModuleConversion
+    module_9: ModuleConversion
+    module_10: ModuleConversion
+    module_11: ModuleConversion
+    module_12: ModuleConversion
+    module_13: ModuleConversion
+    module_14: ModuleConversion
+    module_15: ModuleConversion
+    module_16: ModuleConversion
+    module_17: ModuleConversion
+    module_18: ModuleConversion
+    module_19: ModuleConversion
+    module_20: ModuleConversion
+    module_21: ModuleConversion
+    module_22: ModuleConversion
+    module_23: ModuleConversion
+    module_24: ModuleConversion
+    module_25: ModuleConversion
+    module_26: ModuleConversion
+    module_27: ModuleConversion
 
 
 class AngularCalibration2D(XRPDBaseModel):
@@ -244,6 +244,65 @@ class AngularCalibration2D(XRPDBaseModel):
     module_25: ModuleConversion2D
     module_26: ModuleConversion2D
     module_27: ModuleConversion2D
+
+    def _get_module(self, module: int) -> ModuleConversion2D:
+        return getattr(self, f"module_{module}")
+
+    def return_module_raw_tth(self, module: int) -> np.ndarray:
+        """this calculated the module raw tth, ie the tth of the detector
+        without taking the delta angle into account"""
+
+        return self.calculate_module_tth_for_pixel(
+            module=module, pixel_number=PIXEL_NUMBER, delta=0
+        )
+
+    def calculate_detector_tth(self, delta: float | np.ndarray) -> list[np.ndarray]:
+        """this calculates the detector tth, ie the tth of the detector
+        without taking the delta angle into account"""
+
+        return [
+            self.calculate_module_tth_for_pixel(
+                module=module,
+                pixel_number=PIXEL_NUMBER,
+                delta=delta,
+            )
+            for module in range(28)
+        ]
+
+    def return_module_tth(
+        self,
+        module: int,
+        delta: float | np.ndarray,
+    ):
+
+        return self.calculate_module_tth_for_pixel(
+            module=module,
+            pixel_number=PIXEL_NUMBER,
+            delta=delta,
+        )
+
+    def calculate_module_tth_for_pixel(
+        self,
+        module: int,
+        pixel_number: np.ndarray,
+        delta: float | np.ndarray,
+    ) -> np.ndarray:
+
+        module_conversion = self._get_module(module)
+
+        return channel_to_angle_2d_offset_rotation_centre(
+            pixel_number=np.asarray(pixel_number),
+            centre=module_conversion.centre,
+            pixel_size=module_conversion.pixel_size,
+            radius=module_conversion.radius,
+            module_angle=module_conversion.module_angle,
+            tilt=module_conversion.tilt,
+            zero_offset=self.beamline_offset,
+            pixel_direction=module_conversion.pixel_direction,
+            delta=delta,
+            rotation_centre_x=self.rotation_centre_x,
+            rotation_centre_y=self.rotation_centre_y,
+        )
 
 
 # TODO: "internal", "external", "best" in error calc have been added
@@ -683,6 +742,13 @@ class MythenModule:
         return masked_counts.flatten()
 
     @cached_property
+    def pixels(self) -> np.ndarray:
+        pixels_2d = np.broadcast_to(np.arange(self.data.shape[1]), self.data.shape)
+        masked_pixels = pixels_2d[:, ~self.bad_channel_mask]
+
+        return masked_pixels.flatten()
+
+    @cached_property
     def duration(self) -> np.ndarray:
         duration = self.duration_2d[:, ~self.bad_channel_mask]
         return duration.flatten()
@@ -1015,16 +1081,30 @@ class MythenDetector:
 
         return tth, counts, error
 
-    def plot_diffraction_by_mod(self, filepath: str | Path | None = None):
-        plt.figure(figsize=(10, 7))
+    def get_diffraction_for_seperate_modules(
+        self, modules: list[int]
+    ) -> dict[int, tuple[np.ndarray, np.ndarray]]:
 
-        print(self.good_modules)
-
-        for module in self.good_modules:
-            print(module)
+        module_data = {}
+        for module in modules:
             sort_index = np.argsort(self.modules[module].tth)
             tth = (self.modules[module].tth)[sort_index]
             counts = (self.modules[module].counts)[sort_index]
+
+            # if pixels:
+            # pixels_array = (self.modules[module].pixels)[sort_index]
+            module_data[module] = (tth, counts)
+
+        return module_data
+
+    def plot_diffraction_by_mod(self, filepath: str | Path | None = None):
+        plt.figure(figsize=(10, 7))
+
+        module_data = self.get_diffraction_for_seperate_modules(self.good_modules)
+
+        for module in self.good_modules:
+            print(module)
+            tth, counts = module_data[module]
 
             plt.plot(
                 tth,

@@ -191,13 +191,13 @@ def paired_modules():
     return pairs
 
 
-def find_pair(mod: int):
+def find_pair(mod: int) -> int:
     modules_array = paired_modules()
 
     row, col = np.where(modules_array == mod)
     if len(row) == 0:
-        return None  # value not found
-    return modules_array[row[0], 1 - col[0]]
+        raise ValueError(f"Module {mod} is not in the paired modules array.")
+    return int(modules_array[row[0], 1 - col[0]])
 
 
 def calc_starting_module_offset(initial_module=0.45, offset=2.5) -> dict[int, float]:
