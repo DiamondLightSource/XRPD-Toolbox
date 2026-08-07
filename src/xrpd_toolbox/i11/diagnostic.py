@@ -187,6 +187,8 @@ class DetectorAlignmentSimulator:
         self._build_figure()
         self._draw_static_scene()
         self._update(None)
+        self._view_z(None)
+
         plt.show()
 
     def _select_cones_to_draw(self) -> None:
@@ -269,6 +271,10 @@ class DetectorAlignmentSimulator:
         )
 
         self.ax_3d: Axes3D = self.fig.add_subplot(grid[0, 0], projection="3d")
+        # self.ax_3d.invert_xaxis()
+        # self.ax_3d.invert_yaxis()
+        # self.ax_3d.invert_zaxis()
+
         grid_right = grid[0, 1].subgridspec(2, 1, hspace=0.35)
         self.ax_p1: Axes = self.fig.add_subplot(grid_right[0, 0])
         self.ax_p2: Axes = self.fig.add_subplot(grid_right[1, 0])
@@ -437,17 +443,17 @@ class DetectorAlignmentSimulator:
     def _view_x(self, event: Any) -> None:
         """Look down the beam (+x) axis: detector face-on (y-z plane)."""
 
-        self.ax_3d.view_init(elev=0, azim=0)
+        self.ax_3d.view_init(elev=180, azim=0)
         self.fig.canvas.draw_idle()
 
     def _view_y(self, event: Any) -> None:
         """Look down the y axis: beam vs. strip-offset (x-z) plane."""
-        self.ax_3d.view_init(elev=0, azim=-90)
+        self.ax_3d.view_init(elev=0, azim=90)
         self.fig.canvas.draw_idle()
 
     def _view_z(self, event: Any) -> None:
         """Look down the z axis: top-down beam/arc-sweep (x-y) plane."""
-        self.ax_3d.view_init(elev=90, azim=-90)
+        self.ax_3d.view_init(elev=-90, azim=90)
         self.fig.canvas.draw_idle()
 
     def _view_iso(self, event: Any) -> None:
