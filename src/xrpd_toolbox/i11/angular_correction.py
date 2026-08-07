@@ -42,10 +42,10 @@ pd.set_option("display.max_columns", 20)
 pd.set_option("display.width", 1000)
 
 
-def fmt(x):
+def fmt(x: int | float):
     if x != 0 and (abs(x) < 0.001 or abs(x) > 10000):
-        return "%.5e" % x
-    return "%.5f" % x
+        return f"{x:.5e}"
+    return f"{x:.5f}"
 
 
 pd.set_option("display.float_format", fmt)
@@ -733,7 +733,15 @@ def other_plot():
 
 
 def plot_peak_overlap_results(
-    log_data: pd.DataFrame, filenumber: int, modules: list[int], good_score: float = 7
+    log_data: pd.DataFrame,
+    filenumber: int,
+    modules: list[int],
+    tth1_trim: np.ndarray,
+    counts1_trim: np.ndarray,
+    tth2_trim: np.ndarray,
+    counts2_trim: np.ndarray,
+    calibrant_peak: float,
+    good_score: float = 7,
 ):
 
     title_data = log_data[log_data["FILE NAME"] == filenumber]
@@ -1048,7 +1056,7 @@ def generate_score():
             peak_diff1 = np.abs(calibrant_peak - module1_peak_x[0])
             peak_diff2 = np.abs(calibrant_peak - module2_peak_x[0])
 
-            peak_error = (peak_diff1 * peak_diff2) + 1
+            peak_error = (peak_diff1 * peak_diff2) + 1  # noqa
 
             try:
                 score = (
@@ -1077,6 +1085,11 @@ def generate_score():
                 filenumber=filenumber,
                 good_score=7,
                 modules=[module, find_pair(module)],
+                tth1_trim=tth1_trim,
+                counts1_trim=counts1_trim,
+                tth2_trim=tth2_trim,
+                counts2_trim=counts2_trim,
+                calibrant_peak=calibrant_peak,
             )
     log_data = log_data.astype(float, errors="ignore")
     log_data = log_data.dropna(axis=1, how="all")
