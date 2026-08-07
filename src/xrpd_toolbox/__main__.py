@@ -35,5 +35,26 @@ def mythen_process_gui(ctx: click.Context) -> None:
     run_mythen_process()
 
 
+@main.command(name="mythen_alignment")
+@click.pass_context
+def mythen_alignment(ctx: click.Context) -> None:
+    """Launch the bad pixel GUI."""
+
+    from xrpd_toolbox.i11.diagnostic import DetectorAlignmentSimulator
+
+    DetectorAlignmentSimulator(
+        calibrant_name="LaB6",
+        wavelength_a=0.82,
+        sample_to_detector_mm=762.0,
+        arc_span_deg=80.0,
+        arc_center_deg=45.0,
+        central_azimuth_deg=0.0,
+        n_pixels=1024,
+        default_gap_mm=5.0,
+        angular_sigma_deg=0.08,
+        n_cones_drawn=9,
+    )
+
+
 if __name__ == "__main__":
     main()

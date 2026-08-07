@@ -255,9 +255,7 @@ class DetectorAlignmentSimulator:
     def _build_figure(self) -> None:
         self.fig = plt.figure(figsize=(16, 10.2))
         assert self.fig.canvas.manager is not None
-        self.fig.canvas.manager.set_window_title(
-            "Calibrant Debye-Scherrer / Curved Dual-Strip Detector Simulator"
-        )
+        self.fig.canvas.manager.set_window_title("Mythen Alignment Simulator")
 
         grid = self.fig.add_gridspec(
             1,
