@@ -226,8 +226,8 @@ def spherical_score_plot_2d(
     if np.allclose(euler_x, euler_y):
         raise ValueError(
             "euler_x and euler_y are identical (or near-identical) - every point falls "
-            "on a single diagonal line, so a 2D surface can't be interpolated from them. "
-            "This is usually a copy-paste bug (e.g. passing the same column/array twice "
+            "on a single diagonal line, so a 2D surface can't be interpolated from them"
+            "This is usually a copy-paste bug (e.g. passing the same column/array twice"
             "instead of euler_x and euler_y)."
         )
     if log_scale and score.min() <= 0:
@@ -314,7 +314,7 @@ def spherical_score_plot_2d(
     )
     if log_scale and color_vmin <= 0:
         raise ValueError(
-            f"log_scale=True requires a strictly positive color_range, got vmin={color_vmin}."
+            f"log_scale=True requires a positive color_range, got vmin={color_vmin}."
         )
     color_norm = (
         LogNorm(vmin=color_vmin, vmax=color_vmax)
