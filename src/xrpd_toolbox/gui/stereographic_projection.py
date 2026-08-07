@@ -1,10 +1,11 @@
-from typing import Literal
+from typing import Literal, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
+from matplotlib.colors import LogNorm, Normalize
 from matplotlib.figure import Figure
-from matplotlib.patches import Circle
+from matplotlib.projections.polar import PolarAxes
 from scipy.interpolate import griddata
 from scipy.stats import binned_statistic_2d
 
@@ -15,7 +16,7 @@ def spherical_score_plot_3d(
     score: np.ndarray,
     best: Literal["max", "min"] = "min",
     grid_bins: int = 60,
-    interpolation: Literal["linear", "cubic", "nearest"] = "cubic",
+    interpolation: Literal["linear", "cubic", "nearest"] = "linear",
     angle_unit: Literal["deg", "rad"] = "deg",
     colormap: str = "Inferno",
 ) -> go.Figure:
@@ -187,17 +188,22 @@ def spherical_score_plot_2d(
     euler_x: np.ndarray,
     euler_y: np.ndarray,
     score: np.ndarray,
-    best: Literal["max", "min"] = "min",
+    best: Literal["max", "min"] = "max",
     grid_bins: int = 60,
-    interpolation: Literal["linear", "cubic", "nearest"] = "cubic",
+    interpolation: Literal["linear", "cubic", "nearest"] = "linear",
     angle_unit: Literal["deg", "rad"] = "deg",
     colormap: str = "inferno",
+    color_range: tuple[float, float] | None = None,
+    log_scale: bool = False,
 ) -> Figure:
     """Stereographic (equal-angle) projection heatmap of best score per tilt direction.
 
     euler_x, euler_y are treated as a small tilt (like pitch/roll) away from the
     pole; euler_x/euler_y magnitude sets the polar angle, their ratio sets azimuth.
     Duplicate/nearby samples at the same direction are collapsed to the best score.
+    Binning and interpolation happen in (polar angle, azimuth) space - the same
+    approach as spherical_score_plot - so the two stay directly comparable; the
+    result is only projected to a flat disc for display at the very end.
     """
     euler_x = np.asarray(euler_x, dtype=float)
     euler_y = np.asarray(euler_y, dtype=float)
@@ -207,98 +213,140 @@ def spherical_score_plot_2d(
     n_dropped = len(score) - valid.sum()
     if n_dropped:
         print(
-            f"stereographic_score_heatmap: dropping {n_dropped} row with NaN/inf values"
+            f"spherical_score_plot_2d: dropping {n_dropped} row(s) with NaN/inf values"
         )
     euler_x, euler_y, score = euler_x[valid], euler_y[valid], score[valid]
 
     if euler_x.size < 4:
         raise ValueError(
-            f"stereographic_score_heatmap needs at least 4 valid (non-NaN) samples to "
+            f"spherical_score_plot_2d needs at least 4 valid (non-NaN) samples to "
             f"build a surface, got {euler_x.size}. Check that euler_x/euler_y/score "
             f"were pulled from the right columns and aren't empty or all-NaN."
         )
+    if np.allclose(euler_x, euler_y):
+        raise ValueError(
+            "euler_x and euler_y are identical (or near-identical) - every point falls "
+            "on a single diagonal line, so a 2D surface can't be interpolated from them. "
+            "This is usually a copy-paste bug (e.g. passing the same column/array twice "
+            "instead of euler_x and euler_y)."
+        )
+    if log_scale and score.min() <= 0:
+        raise ValueError(
+            f"log_scale=True requires all scores to be strictly positive, but the "
+            f"minimum score is {score.min()}. Log scale is undefined for zero/negative "
+            f"values."
+        )
 
-    if angle_unit == "deg":
-        euler_x_rad = np.radians(euler_x)
-        euler_y_rad = np.radians(euler_y)
-    else:
-        euler_x_rad = euler_x
-        euler_y_rad = euler_y
+    euler_x_rad = np.radians(euler_x) if angle_unit == "deg" else euler_x
+    euler_y_rad = np.radians(euler_y) if angle_unit == "deg" else euler_y
 
-    # Tilt magnitude (polar angle) and direction (azimuth) from the pole
+    # Tilt magnitude (polar angle from north pole) and direction (azimuth)
     polar_angle_rad = np.hypot(euler_x_rad, euler_y_rad)
     azimuth_rad = np.arctan2(euler_y_rad, euler_x_rad)
 
-    # Equal-angle (Wulff) stereographic projection onto the unit disc
-    projected_radius = np.tan(polar_angle_rad / 2.0)
-    projected_x = projected_radius * np.cos(azimuth_rad)
-    projected_y = projected_radius * np.sin(azimuth_rad)
-
-    # Collapse duplicate/nearby points onto a fine grid, keeping the best score per cell
-    disc_extent = np.max(projected_radius) * 1.05
-    grid_edges = np.linspace(-disc_extent, disc_extent, grid_bins + 1)
-    binned_best_score, x_edges, y_edges, _ = binned_statistic_2d(
-        projected_x,
-        projected_y,
+    # Collapse duplicate/nearby points in (polar, azimuth) space, keeping best score
+    polar_edges = np.linspace(0, polar_angle_rad.max() * 1.02, grid_bins + 1)
+    azimuth_edges = np.linspace(-np.pi, np.pi, grid_bins + 1)
+    binned_best_score, polar_e, azimuth_e, _ = binned_statistic_2d(
+        polar_angle_rad,
+        azimuth_rad,
         score,
         statistic=best,
-        bins=[grid_edges, grid_edges],  # type: ignore
+        bins=[polar_edges, azimuth_edges],  # type: ignore[arg-type]  # scipy stub only declares int
     )
-    bin_centers_x = (x_edges[:-1] + x_edges[1:]) / 2.0
-    bin_centers_y = (y_edges[:-1] + y_edges[1:]) / 2.0
-    grid_x, grid_y = np.meshgrid(bin_centers_x, bin_centers_y, indexing="ij")
+    polar_centers = (polar_e[:-1] + polar_e[1:]) / 2.0
+    azimuth_centers = (azimuth_e[:-1] + azimuth_e[1:]) / 2.0
+    polar_grid, azimuth_grid = np.meshgrid(
+        polar_centers, azimuth_centers, indexing="ij"
+    )
     occupied = ~np.isnan(binned_best_score)
 
-    # Interpolate the sparse best-score points onto a smooth fine grid for the heatmap
-    fine_axis = np.linspace(-disc_extent, disc_extent, 300)
-    fine_grid_x, fine_grid_y = np.meshgrid(fine_axis, fine_axis)
-    smooth_score = griddata(
-        points=(grid_x[occupied], grid_y[occupied]),
-        values=binned_best_score[occupied],
-        xi=(fine_grid_x, fine_grid_y),
-        method=interpolation,
+    # Interpolate onto a fine, regular (polar, azimuth) grid for a smooth surface
+    fine_polar = np.linspace(0, polar_angle_rad.max() * 1.02, 300)
+    fine_azimuth = np.linspace(-np.pi, np.pi, 300)
+    fine_polar_grid, fine_azimuth_grid = np.meshgrid(
+        fine_polar, fine_azimuth, indexing="ij"
+    )
+    occupied_polar = polar_grid[occupied]
+    occupied_azimuth = azimuth_grid[occupied]
+    occupied_score = binned_best_score[occupied]
+
+    # Azimuth is periodic (-pi and +pi are the same direction), but griddata treats
+    # it as a flat, non-periodic domain and leaves a seam/gap near +-pi. Pad with
+    # ghost copies shifted by +-2pi so interpolation sees continuity across the seam.
+    wrapped_polar = np.concatenate([occupied_polar] * 3)
+    wrapped_azimuth = np.concatenate(
+        [occupied_azimuth - 2 * np.pi, occupied_azimuth, occupied_azimuth + 2 * np.pi]
+    )
+    wrapped_score = np.concatenate([occupied_score] * 3)
+
+    try:
+        smooth_score = griddata(
+            points=(wrapped_polar, wrapped_azimuth),
+            values=wrapped_score,
+            xi=(fine_polar_grid, fine_azimuth_grid),
+            method=interpolation,
+        )
+    except Exception as error:
+        raise ValueError(
+            "Could not build a surface from euler_x/euler_y - the points are likely "
+            "collinear or otherwise degenerate (e.g. one axis has near-zero spread, or "
+            "the same data was passed for both axes)."
+        ) from error
+
+    # Project the smoothed (polar, azimuth) grid to the flat disc for display only.
+    # Plotted on a native polar axis (not pre-converted to Cartesian x/y) because
+    # a ring of constant polar angle traces a full circle - non-monotonic in x or y -
+    # which breaks pcolormesh's Cartesian cell-edge inference and causes seam artifacts.
+    fine_radius_grid = np.tan(fine_polar_grid / 2.0)
+    smooth_score = np.ma.masked_where(np.isnan(smooth_score), smooth_score)
+
+    disc_extent = fine_radius_grid.max()
+    # Default the color axis to the real score range rather than auto-scaling from
+    # the interpolated surface, whose cubic spline can overshoot past the real data
+    # near sparse/noisy edges. This only affects display (out-of-range pixels are
+    # clamped to the colormap's end colors) - the returned smooth_score array is
+    # left untouched.
+    color_vmin, color_vmax = (
+        color_range
+        if color_range is not None
+        else (float(score.min()), float(score.max()))
+    )
+    if log_scale and color_vmin <= 0:
+        raise ValueError(
+            f"log_scale=True requires a strictly positive color_range, got vmin={color_vmin}."
+        )
+    color_norm = (
+        LogNorm(vmin=color_vmin, vmax=color_vmax)
+        if log_scale
+        else Normalize(vmin=color_vmin, vmax=color_vmax)
     )
 
-    # Mask outside the projection disc and outside the convex hull of real data
-    outside_disc = fine_grid_x**2 + fine_grid_y**2 > disc_extent**2
-    smooth_score = np.ma.masked_where(
-        outside_disc | np.isnan(smooth_score), smooth_score
-    )
-
-    fig, ax = plt.subplots(figsize=(7, 6), subplot_kw={"aspect": "equal"})
+    fig = plt.figure(figsize=(7, 6))
+    ax = cast(PolarAxes, fig.add_subplot(111, projection="polar"))
     heatmap = ax.pcolormesh(
-        fine_grid_x, fine_grid_y, smooth_score, cmap=colormap, shading="auto"
+        fine_azimuth_grid,
+        fine_radius_grid,
+        smooth_score,
+        cmap=colormap,
+        shading="auto",
+        norm=color_norm,
     )
-    ax.scatter(projected_x, projected_y, s=4, c="white", alpha=0.25, linewidths=0)
+    projected_radius = np.tan(polar_angle_rad / 2.0)
+    ax.scatter(azimuth_rad, projected_radius, s=4, c="white", alpha=0.25, linewidths=0)
 
-    # Stereonet-style reference circles/spokes, labelled in the polar angle unit
+    # Radial ticks labelled by polar angle in degrees, spokes every 30 degrees
     max_polar_deg = np.degrees(2 * np.arctan(disc_extent))
-    for polar_deg in np.arange(15, max_polar_deg, 15):
-        radius = np.tan(np.radians(polar_deg) / 2.0)
-        ax.add_patch(
-            Circle((0, 0), radius, fill=False, color="gray", linewidth=0.5, alpha=0.6)
-        )
-    for azimuth_deg in np.arange(0, 360, 30):
-        azimuth = np.radians(azimuth_deg)
-        ax.plot(
-            [0, disc_extent * np.cos(azimuth)],
-            [0, disc_extent * np.sin(azimuth)],
-            color="gray",
-            linewidth=0.5,
-            alpha=0.6,
-        )
-    ax.add_patch(Circle((0, 0), disc_extent, fill=False, color="black", linewidth=1.2))
-
-    ax.set_xlim(-disc_extent, disc_extent)
-    ax.set_ylim(-disc_extent, disc_extent)
-    ax.set_xlabel("euler_x tilt direction")
-    ax.set_ylabel("euler_y tilt direction")
-    ax.set_title(f"Stereographic projection - {best} score per tilt direction")
-    ax.set_xticks([])
-    ax.set_yticks([])
+    tick_polar_deg = np.arange(15, max_polar_deg, 15)
+    ax.set_rticks(np.tan(np.radians(tick_polar_deg) / 2.0))
+    ax.set_yticklabels([f"{d:.0f}°" for d in tick_polar_deg])
+    ax.set_thetagrids(np.arange(0, 360, 30))
+    ax.set_rlim(0, disc_extent)
+    ax.grid(color="gray", alpha=0.4, linewidth=0.5)
+    ax.set_title(f"Stereographic projection - {best} score per tilt direction", pad=20)
 
     colorbar = fig.colorbar(heatmap, ax=ax, fraction=0.046, pad=0.04)
-    colorbar.set_label("score")
+    colorbar.set_label("score (log scale)" if log_scale else "score")
 
     fig.tight_layout()
     return fig

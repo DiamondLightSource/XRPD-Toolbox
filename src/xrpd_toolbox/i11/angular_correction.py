@@ -17,7 +17,6 @@ from sklearn.preprocessing import StandardScaler
 
 from xrpd_toolbox.gui.stereographic_projection import (
     spherical_score_plot_2d,
-    spherical_score_plot_3d,
 )
 from xrpd_toolbox.i11.mythen import (
     # CENTRE,
@@ -39,8 +38,17 @@ from xrpd_toolbox.i11.mythen import (
 from xrpd_toolbox.utils.mythen_utils import find_pair, paired_modules
 from xrpd_toolbox.utils.utils import h5_to_array
 
-pd.set_option("display.max_columns", 10)
+pd.set_option("display.max_columns", 20)
 pd.set_option("display.width", 1000)
+
+
+def fmt(x):
+    if x != 0 and (abs(x) < 0.001 or abs(x) > 10000):
+        return "%.5e" % x
+    return "%.5f" % x
+
+
+pd.set_option("display.float_format", fmt)
 
 DEFAULT_COUNTER = 0
 STRIPS_PER_MODULE = 1280
@@ -918,9 +926,9 @@ def generate_score():
 
     pose = base_to_euler(jack_y1=y1, jack_y2=y2, jack_y3=y3, plate_x1=x1, plate_x2=x2)
 
-    log_data["euler_x"] = pose["euler_angles_deg"][:, 0]
-    log_data["euler_y"] = pose["euler_angles_deg"][:, 1]
-    log_data["euler_z"] = pose["euler_angles_deg"][:, 2]
+    log_data["pitch"] = pose["pitch_deg"]
+    log_data["yaw"] = pose["roll_deg"]
+    log_data["roll"] = pose["yaw_deg"]
 
     for filepath in filepaths:
         print(f"Processing file: {filepath}")
@@ -1071,7 +1079,7 @@ def generate_score():
                 modules=[module, find_pair(module)],
             )
     log_data = log_data.astype(float, errors="ignore")
-    log_data.dropna(axis=1, how="all")
+    log_data = log_data.dropna(axis=1, how="all")
     log_data.to_csv(f"{comissioning_directory}/scores.csv", index=False)
 
     return log_data
@@ -1085,6 +1093,8 @@ def get_data(score_filepath: str, reload: bool = True) -> pd.DataFrame:
     else:
         score_dataframe = generate_score()
 
+    score_dataframe = score_dataframe.dropna(axis=1, how="all")
+
     return score_dataframe
 
 
@@ -1092,20 +1102,42 @@ if __name__ == "__main__":
     # score_cols = [f"score_{m}_{find_pair(m)}" for m in modules_list]
     # log_data["score"] = log_data[score_cols].sum(axis=1)  # or .sum/.prod
 
-    comissioning_directory = "/scratch/translate_mythen/cm44155-2"
-    score_filepath = f"{comissioning_directory}/scores.csv"
+    print(
+        base_to_euler(
+            jack_y1=-0.45, jack_y2=-0.45, jack_y3=-0.45, plate_x1=-2.7, plate_x2=-2.7
+        )["euler_angles_deg"]
+    )
+    # quit()
+
+    # comissioning_directory = "/scratch/translate_mythen/cm44155-2"
+    comissioning_directory = "/workspaces/outputs"
+    # score_filepath = f"{comissioning_directory}/scores.csv"
+    score_filepath = "/workspaces/outputs/scores.csv"
     param_cols = ["XTRANS1", "XTRANS2", "Y1", "Y2", "Y3"]
 
     log_data = get_data(score_filepath, reload=False)
 
     print(log_data)
 
-    euler_x = log_data["euler_x"].to_numpy()
-    euler_y = log_data["euler_y"].to_numpy()
-    euler_z = log_data["euler_z"].to_numpy()
+    pitch = log_data["pitch"].to_numpy()
+    yaw = log_data["yaw"].to_numpy()
+    roll = log_data["roll"].to_numpy()
     score = log_data["score"].to_numpy()
 
-    fig = spherical_score_plot_2d(euler_x, euler_x, score, best="min")
+    print("pitch/euler_x", pitch.min(), pitch.max())
+    print("yaw/euler_y", yaw.min(), yaw.max())
+    print("roll/euler_z", roll.min(), roll.max())
+    print("score", score.min(), score.max())
+
+    print("\ncurrent\n")
+    print(log_data[log_data["FILE NAME"] == 1438162].T)
+    print("\ncurrent\n")
+
+    print("\nbest\n")
+    print(log_data[log_data["score"] == score.min()].T)
+    print("\nbest\n")
+
+    fig = spherical_score_plot_2d(pitch, yaw, score, best="min", log_scale=True)
     fig.savefig(f"/{comissioning_directory}/stereographic_projection.png")
     print("saved demo plot")
 
